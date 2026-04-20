@@ -4,3 +4,5 @@
 *$py.class
 .env
 .ipynb_checkpoints/
+
+backend/cache/

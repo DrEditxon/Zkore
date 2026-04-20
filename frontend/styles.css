@@ -806,15 +806,15 @@ select:focus {
     100% { transform: rotate(360deg); }
 }
 
-/* ── Modal Match Header ───────────────────────────────────── */
 .modal-match-header {
     display: flex;
     justify-content: center;
     align-items: center;
-    gap: 2rem;
+    gap: 1.5rem;
     padding-bottom: 2rem;
-    margin-bottom: 2rem;
+    margin-bottom: 1.5rem;
     border-bottom: 1px solid var(--glass-border);
+    position: relative;
 }
 
 .header-team {
@@ -840,10 +840,92 @@ select:focus {
     color: white;
 }
 
+.header-vs-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    padding: 0 1rem;
+}
+
 .header-vs {
     font-family: var(--font-heading);
     font-weight: 800;
-    color: var(--text-muted);
-    font-size: 1rem;
-    opacity: 0.3;
+    color: var(--primary);
+    font-size: 1.25rem;
+    text-shadow: 0 0 10px var(--primary-glow);
+    margin-bottom: 0.3rem;
 }
+
+.xg-badge {
+    background: rgba(255,255,255,0.05);
+    border: 1px solid rgba(255,255,255,0.1);
+    padding: 0.3rem 0.6rem;
+    border-radius: 999px;
+    font-family: var(--font-heading);
+    font-weight: 800;
+    font-size: 0.75rem;
+    color: #e2e8f0;
+    box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+    white-space: nowrap;
+}
+.xg-val { color: var(--primary); }
+
+/* ── Premium Highlighting (Added) ────────────────────────── */
+.gold-highlight {
+    border-color: #ffd700 !important;
+    background: rgba(255, 215, 0, 0.08) !important;
+    box-shadow: 0 0 15px rgba(255, 215, 0, 0.2);
+    position: relative;
+    overflow: hidden;
+}
+
+.fav-badge {
+    background: rgba(255, 215, 0, 0.2);
+    color: #ffd700;
+    border: 1px solid rgba(255, 215, 0, 0.4);
+    padding: 0.1rem 0.4rem;
+    border-radius: 4px;
+    font-size: 0.55rem;
+    font-weight: 800;
+    margin-left: 0.5rem;
+    letter-spacing: 0.05em;
+    vertical-align: middle;
+}
+
+/* ── Market Colors (Added) ────────────────────────── */
+.market-high { border-color: rgba(57, 255, 20, 0.5) !important; background: rgba(57, 255, 20, 0.05) !important; }
+.market-high .market-value { color: var(--secondary) !important; text-shadow: 0 0 8px rgba(57,255,20,0.4); }
+.market-high .market-bar { background: var(--secondary) !important; box-shadow: 0 0 8px rgba(57,255,20,0.5); }
+
+.market-low { border-color: rgba(255, 71, 87, 0.5) !important; background: rgba(255, 71, 87, 0.05) !important; }
+.market-low .market-value { color: var(--danger) !important; }
+.market-low .market-bar { background: var(--danger) !important; }
+
+/* ── Scoreline Rankings (Added) ────────────────────────── */
+.scoreline-row::before {
+    content: attr(data-rank) "º";
+    font-weight: 800;
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    width: 20px;
+    text-align: right;
+}
+.scoreline-row.top::before { color: var(--primary); }
+
+/* Explanation Verdict */
+.explanation-verdict {
+    background: rgba(30, 41, 59, 0.4);
+    border-left: 4px solid var(--primary);
+    padding: 1.25rem;
+    border-radius: 0 0.75rem 0.75rem 0;
+    margin-bottom: 2rem;
+    font-size: 0.95rem;
+    line-height: 1.6;
+    letter-spacing: 0.02em;
+    font-style: italic;
+    color: #e2e8f0;
+    box-shadow: 0 4px 10px rgba(0,0,0,0.2);
+}
+.explanation-verdict strong { color: var(--primary); font-style: normal; }

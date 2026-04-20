@@ -91,6 +91,8 @@ async function loadMatches() {
         
         loader.style.display = "none";
         section.style.display = "block";
+        
+        setTimeout(triggerAnimations, 50);
     } catch (error) {
         console.error("Error loading matches:", error);
         loader.innerHTML = `<p style="color: #ff4757; padding: 2rem;">Error al obtener los partidos: ${error.message}</p>`;
@@ -139,9 +141,9 @@ function renderMatchGrid(matches) {
                         <span>V: ${Number(pred.visitante).toFixed(1)}%</span>
                     </div>
                     <div class="quick-bar-container">
-                        <div class="quick-bar-part local" style="flex: ${pred.local}"></div>
-                        <div class="quick-bar-part draw" style="flex: ${pred.empate}"></div>
-                        <div class="quick-bar-part away" style="flex: ${pred.visitante}"></div>
+                        <div class="quick-bar-part local animate-bar" data-target="${pred.local}" style="flex: 0"></div>
+                        <div class="quick-bar-part draw animate-bar" data-target="${pred.empate}" style="flex: 0"></div>
+                        <div class="quick-bar-part away animate-bar" data-target="${pred.visitante}" style="flex: 0"></div>
                     </div>
                 </div>
 
@@ -189,7 +191,16 @@ async function openMatchDetail(homeId, awayId, homeName, visitName, homeCrest, v
 
     try {
         const response = await fetch(`/predict?league_code=${leagueCode}&team_local=${homeId}&team_visitante=${awayId}`);
-        if (!response.ok) throw new Error("Error en la predicción avanzada");
+        if (!response.ok) {
+            let errorMsg = "Error en la predicción avanzada";
+            try {
+                const errData = await response.json();
+                if (errData && errData.detail) errorMsg = errData.detail;
+            } catch (e) {
+                // Keep default message if not JSON
+            }
+            throw new Error(errorMsg);
+        }
         
         const data = await response.json();
         renderDetailedPrediction(data, homeName, visitName, homeCrest, visitCrest);
@@ -208,11 +219,10 @@ function renderDetailedPrediction(data, localName, visitName, localCrest, visitC
     const info = data.modelo_info;
     const dist = data.distribucion_goles;
     const markets = data.metricas_mercado;
-    const verdictStr = getVerdict(data.probabilidades.local, data.probabilidades.empate, data.probabilidades.visitante, localName, visitName);
+    const xG = data.expected_goals;
+    const explicacion = info.explicacion;
 
     if (data.rapidapi_rate_limit) showPushNotification(data.rapidapi_rate_limit);
-
-    // ... (rest of advancedStatsHtml creation logic is outside this block but referenced)
 
     let advancedStatsHtml = "";
     if (data.estadisticas_esperadas) {
@@ -226,10 +236,12 @@ function renderDetailedPrediction(data, localName, visitName, localCrest, visitC
                         <div class="team-stat">
                             <div class="card-yellow"></div>
                             <span class="team-stat-val">${stats.tarjetas_amarillas.local}</span>
+                            <span class="team-stat-name">L</span>
                         </div>
                         <div class="team-stat">
                             <div class="card-yellow"></div>
                             <span class="team-stat-val">${stats.tarjetas_amarillas.visitante}</span>
+                            <span class="team-stat-name">V</span>
                         </div>
                     </div>
                 </div>
@@ -239,20 +251,31 @@ function renderDetailedPrediction(data, localName, visitName, localCrest, visitC
                         <div class="team-stat">
                             <div class="shot-icon">🎯</div>
                             <span class="team-stat-val">${stats.tiros_arco.local}</span>
+                            <span class="team-stat-name">L</span>
                         </div>
                         <div class="team-stat">
                             <div class="shot-icon">🎯</div>
                             <span class="team-stat-val">${stats.tiros_arco.visitante}</span>
+                            <span class="team-stat-name">V</span>
                         </div>
                     </div>
                 </div>
             </div>`;
     }
 
+    let p_l = data.probabilidades.local;
+    let p_e = data.probabilidades.empate;
+    let p_v = data.probabilidades.visitante;
+    
+    let winnerPrefix = "";
+    if (p_l > p_e && p_l > p_v) winnerPrefix = "local";
+    else if (p_v > p_e && p_v > p_l) winnerPrefix = "visitante";
+    else winnerPrefix = "empate";
+
     const scorelineRows = data.marcadores_probables.map((s, i) => `
-        <div class="scoreline-row ${i === 0 ? 'top' : ''}">
+        <div class="scoreline-row ${i === 0 ? 'top' : ''}" data-rank="${i+1}">
             <span class="score-val">${s.local} – ${s.visitante}</span>
-            <span class="score-bar-wrap"><span class="score-bar" style="width:${Math.min(s.probabilidad * 5, 100)}%"></span></span>
+            <span class="score-bar-wrap"><span class="score-bar animate-bar" data-target="${Math.min(s.probabilidad * 5, 100)}" style="width:0%"></span></span>
             <span class="score-pct">${s.probabilidad}%</span>
         </div>`).join("");
 
@@ -262,7 +285,10 @@ function renderDetailedPrediction(data, localName, visitName, localCrest, visitC
                 <img src="${localCrest}" alt="${localName}">
                 <span>${localName}</span>
             </div>
-            <div class="header-vs">VS</div>
+            <div class="header-vs-container">
+                <div class="header-vs">VS</div>
+                <div class="xg-badge">xG <span class="xg-val">${xG.local}</span> - <span class="xg-val">${xG.visitante}</span></div>
+            </div>
             <div class="header-team">
                 <img src="${visitCrest}" alt="${visitName}">
                 <span>${visitName}</span>
@@ -273,23 +299,25 @@ function renderDetailedPrediction(data, localName, visitName, localCrest, visitC
             🤖 ${info.tipo} &nbsp;·&nbsp; Confianza: <strong>${info.confianza}</strong>
         </div>
         
-        <div class="verdict-box">${verdictStr}</div>
+        <div class="section-title">📊 ¿Por qué esta predicción?</div>
+        <div class="explanation-verdict">${explicacion}</div>
 
         <div class="section-title">Probabilidades de Resultado</div>
         <div class="probability-list">
-            ${renderProbRow("Local", data.probabilidades.local, "")}
-            ${renderProbRow("Empate", data.probabilidades.empate, "draw")}
-            ${renderProbRow("Visitante", data.probabilidades.visitante, "away")}
+            ${renderProbRow("Local", p_l, "", winnerPrefix === "local")}
+            ${renderProbRow("Empate", p_e, "draw", winnerPrefix === "empate")}
+            ${renderProbRow("Visitante", p_v, "away", winnerPrefix === "visitante")}
         </div>
 
         ${advancedStatsHtml}
 
-        <div class="section-title" style="margin-top:1.5rem">Métricas de Mercado</div>
+        <div class="section-title" style="margin-top:1.5rem">Mercados Monetarios</div>
         <div class="market-metrics-grid">
-            ${renderMarketBox("BTTS", markets.btts)}
-            ${renderMarketBox("Over 2.5", markets.over_2_5)}
-            ${renderMarketBox("Clean Sheet (L)", markets.clean_sheet_local)}
-            ${renderMarketBox("Clean Sheet (V)", markets.clean_sheet_visitante)}
+            ${renderMarketBox("Ambos Marcan", markets.btts)}
+            ${renderMarketBox("Más de 2.5", markets.over_2_5)}
+            ${renderMarketBox("Menos de 2.5", markets.under_2_5)}
+            ${renderMarketBox("Arco 0 ("+localName.substring(0,3)+")", markets.clean_sheet_local)}
+            ${renderMarketBox("Arco 0 ("+visitName.substring(0,3)+")", markets.clean_sheet_visitante)}
         </div>
 
         <div class="section-title" style="margin-top:2rem">Distribución de Goles</div>
@@ -308,22 +336,30 @@ function renderDetailedPrediction(data, localName, visitName, localCrest, visitC
         <div class="section-title" style="margin-top:2rem">Marcadores Probables</div>
         <div class="scorelines">${scorelineRows}</div>
     `;
+
+    setTimeout(triggerAnimations, 50);
 }
 
-function renderProbRow(label, val, colorClass) {
+function renderProbRow(label, val, colorClass, isGolden) {
+    const goldClass = isGolden ? "gold-highlight" : "";
+    const favBadge = isGolden ? `<span class="fav-badge">★ FAVORITO</span>` : "";
     return `
-        <div class="prob-row">
-            <div class="prob-info"><div class="prob-label">${label}</div><div class="prob-value">${val}%</div></div>
-            <div class="prob-bar-container"><div class="prob-bar ${colorClass}" style="width:${val}%"></div></div>
+        <div class="prob-row ${goldClass}">
+            <div class="prob-info"><div class="prob-label">${label}${favBadge}</div><div class="prob-value">${val}%</div></div>
+            <div class="prob-bar-container"><div class="prob-bar animate-bar ${colorClass}" data-target="${val}" style="width:0%"></div></div>
         </div>`;
 }
 
 function renderMarketBox(label, val) {
+    let colorClass = "";
+    if (val >= 55) colorClass = "market-high";
+    else if (val <= 40) colorClass = "market-low";
+
     return `
-        <div class="market-stat-box">
+        <div class="market-stat-box ${colorClass}">
             <div class="market-label">${label}</div>
             <div class="market-value">${val}%</div>
-            <div class="market-bar-container"><div class="market-bar" style="width:${val}%"></div></div>
+            <div class="market-bar-container"><div class="market-bar animate-bar" data-target="${val}" style="width:0%"></div></div>
         </div>`;
 }
 
@@ -334,17 +370,24 @@ function renderGoalDist(dist, colorClass) {
         return `
             <div class="goal-dist-row">
                 <div class="goal-label">${d.goles}</div>
-                <div class="goal-bar-wrap"><div class="goal-bar ${colorClass}" style="width:${barWidth}%"></div></div>
+                <div class="goal-bar-wrap"><div class="goal-bar animate-bar ${colorClass}" data-target="${barWidth}" style="width:0%"></div></div>
                 <div class="goal-pct">${d.probabilidad}%</div>
             </div>`;
     }).join("");
 }
 
-function getVerdict(probLocal, probDraw, probAway, localName, visitName) {
-    if (probLocal > 60) return `Clara ventaja para <strong>${localName}</strong> debido a su fortaleza local e historial reciente.`;
-    if (probAway > 60) return `Predicción de victoria muy probable para <strong>${visitName}</strong>.`;
-    if (Math.abs(probLocal - probAway) < 10 && probDraw > 25) return `Encuentro muy equilibrado. Alta probabilidad de empate.`;
-    return probLocal > probAway ? `Ligero favoritismo para <strong>${localName}</strong>.` : `Ligero favoritismo para <strong>${visitName}</strong>.`;
+function triggerAnimations() {
+    const bars = document.querySelectorAll('.animate-bar');
+    bars.forEach(bar => {
+        const target = bar.getAttribute('data-target');
+        if (target !== null) {
+            if (bar.classList.contains('quick-bar-part')) {
+                bar.style.flex = target;
+            } else {
+                bar.style.width = target + '%';
+            }
+        }
+    });
 }
 
 function showPushNotification(remainingRequests) {
