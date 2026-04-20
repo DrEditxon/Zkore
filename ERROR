@@ -1,0 +1,8 @@
+Error:-No genera predicción en las siguientes ligas
+Premier Leage
+Bundesliga
+Liga Brazil
+
+
+ERROR-
+WARNING:app.main:Failed to fetch quick prediction for 540688: feature_names mismatch: ['home_elo', 'away_elo', 'elo_diff', 'home_points_per_game', 'away_points_per_game', 'home_rest_days', 'away_rest_days', 'rest_days_diff', 'home_form_pts', 'away_form_pts', 'form_diff', 'home_win_streak', 'away_win_streak', 'streak_diff', 'home_unbeaten_streak', 'away_unbeaten_streak', 'home_gs_ewm', 'home_gc_ewm', 'away_gs_ewm', 'away_gc_ewm', 'home_cs_rate', 'away_cs_rate', 'home_fts_rate', 'away_fts_rate', 'h2h_home_wins', 'h2h_away_wins', 'h2h_gd', 'home_attack_vs_away_defense', 'away_attack_vs_home_defense', 'home_goal_rate', 'away_goal_rate', 'home_xg_proxy', 'away_xg_proxy', 'home_advantage'] ['home_elo', 'away_elo', 'elo_diff', 'home_points_per_game', 'away_points_per_game', 'home_rest_days', 'away_rest_days', 'rest_days_diff', 'home_form_pts', 'away_form_pts', 'form_diff', 'home_win_streak', 'away_win_streak', 'streak_diff', 'home_unbeaten_streak', 'away_unbeaten_streak', 'home_gs_ewm', 'home_gc_ewm', 'away_gs_ewm', 'away_gc_ewm', 'home_cs_rate', 'away_cs_rate', 'home_fts_rate', 'away_fts_rate', 'h2h_home_wins', 'h2h_away_wins', 'h2h_gd', 'home_attack_vs_away_defense', 'away_attack_vs_home_defense', 'home_goal_rate', 'away_goal_rate', 'home_xg_proxy', 'away_xg_proxy'] 
