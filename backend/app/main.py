@@ -1,6 +1,6 @@
 import logging
 import os
-from fastapi import FastAPI
+from fastapi import FastAPI, BackgroundTasks
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -56,10 +56,12 @@ def list_leagues():
     return data_service.get_leagues()
 
 @app.get("/upcoming/{league_code}")
-def list_upcoming(league_code: str):
+def list_upcoming(league_code: str, background_tasks: BackgroundTasks):
     data = data_service.get_upcoming_matches(league_code)
     if not data["matches"]:
         return data
+        
+    model_service.ensure_model_ready(league_code, background_tasks)
 
     from app.core.pipeline import predict_match
 
@@ -70,7 +72,7 @@ def list_upcoming(league_code: str):
             h_name = m["homeTeam"]["name"]
             a_name = m["awayTeam"]["name"]
             
-            res = predict_match(league_code, h_id, a_id, h_name, a_name)
+            res = predict_match(league_code, h_id, a_id, h_name, a_name, background_tasks=background_tasks)
             p_hom = res["probabilidades"]["local"]
             p_drw = res["probabilidades"]["empate"]
             p_awy = res["probabilidades"]["visitante"]

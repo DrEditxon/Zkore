@@ -159,6 +159,44 @@ class ModelService:
                 
         return payload
 
+    def ensure_model_ready(self, league_code: str, background_tasks=None):
+        """Checks if model exists and is not stale. Triggers training if needed."""
+        matches = data_service.get_historical_matches(league_code)
+        payload = self._load_model(league_code)
+        
+        def trigger_training(matches_data):
+            if self._training_in_progress.get(league_code):
+                return
+            self._training_in_progress[league_code] = True
+            def train_task():
+                try:
+                    self._train_and_save(league_code, matches_data)
+                except Exception as e:
+                    logger.error(f"Error training: {e}")
+                finally:
+                    self._training_in_progress[league_code] = False
+            
+            if background_tasks:
+                background_tasks.add_task(train_task)
+            else:
+                train_task()
+
+        if payload is None:
+            if len(matches) < 10:
+                return # Not enough data, but don't block
+            
+            if self._training_in_progress.get(league_code):
+                from fastapi import HTTPException
+                raise HTTPException(status_code=202, detail={"status": "training", "message": "Entrenamiento en curso..."})
+            
+            trigger_training(matches)
+            if background_tasks:
+                from fastapi import HTTPException
+                raise HTTPException(status_code=202, detail={"status": "training", "message": "Entrenamiento iniciado..."})
+        
+        elif payload.get("is_stale"):
+            trigger_training(matches)
+
     def predict_xg(self, league_code: str, home_team_id: int, away_team_id: int, background_tasks=None) -> tuple:
         """
         Loads the model (or trains it if not present) and predicts xG.
