@@ -19,7 +19,7 @@ def generate_heuristic_explanation(lambda_h, lambda_a, h_name, a_name, p_h, p_a)
         fav = h_name if p_h > p_a else a_name
         return f"Ligero favoritismo para {fav} sustentado en métricas históricas de ELO defensivo/ofensivo cruzado."
 
-def predict_match(league_code: str, home_id: int, away_id: int, home_name: str, away_name: str, apply_dixon_coles=False) -> dict:
+def predict_match(league_code: str, home_id: int, away_id: int, home_name: str, away_name: str, apply_dixon_coles=False, background_tasks=None) -> dict:
     """
     Facade que orquesta TODO el ciclo predictivo de MLS (Machine Learning Service).
     Data -> Feature_Engineering -> Regressor -> Poisson -> Calibrator -> Explicación.
@@ -28,7 +28,7 @@ def predict_match(league_code: str, home_id: int, away_id: int, home_name: str, 
     logger.info(f"[{league_code}] Validating and predicting match {home_id} vs {away_id}")
     
     # 1. Prediction execution
-    lambda_h, lambda_a, payload = model_service.predict_xg(league_code, home_id, away_id)
+    lambda_h, lambda_a, payload = model_service.predict_xg(league_code, home_id, away_id, background_tasks)
     n_rows = payload.get("n_rows", 0)
     
     # 2. Probability Generation

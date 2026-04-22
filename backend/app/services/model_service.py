@@ -21,6 +21,7 @@ os.makedirs(MODELS_DIR, exist_ok=True)
 class ModelService:
     def __init__(self):
         self._model_cache = {}
+        self._training_in_progress = {}
 
     def _model_path(self, league_code: str, timestamp: bool = True) -> str:
         if timestamp:
@@ -148,7 +149,7 @@ class ModelService:
             logger.error(f"Error loading model for {league_code} from {latest_file}: {e}")
             return None
 
-    def predict_xg(self, league_code: str, home_team_id: int, away_team_id: int) -> tuple:
+    def predict_xg(self, league_code: str, home_team_id: int, away_team_id: int, background_tasks=None) -> tuple:
         """
         Loads the model (or trains it if not present) and predicts xG.
         Returns: lambda_home, lambda_away, model_payload
@@ -162,8 +163,29 @@ class ModelService:
                     f"No hay suficientes partidos finalizados para {league_code}. "
                     "Intenta más tarde en la temporada."
                 )
-            logger.info(f"[{league_code}] No model found. Training now...")
-            payload = self._train_and_save(league_code, matches)
+                
+            if self._training_in_progress.get(league_code):
+                from fastapi import HTTPException
+                raise HTTPException(status_code=202, detail={"status": "training", "message": f"Modelo para {league_code} en entrenamiento."})
+                
+            logger.info(f"[{league_code}] No model found. Triggering training...")
+            self._training_in_progress[league_code] = True
+            
+            def train_task():
+                try:
+                    self._train_and_save(league_code, matches)
+                except Exception as e:
+                    logger.error(f"Error training model for {league_code}: {e}")
+                finally:
+                    self._training_in_progress[league_code] = False
+
+            if background_tasks is not None:
+                background_tasks.add_task(train_task)
+                from fastapi import HTTPException
+                raise HTTPException(status_code=202, detail={"status": "training", "message": f"Entrenamiento iniciado para {league_code}."})
+            else:
+                train_task()
+                payload = self._load_model(league_code)
 
         xg_home: XGBRegressor = payload["xg_home"]
         xg_away: XGBRegressor = payload["xg_away"]

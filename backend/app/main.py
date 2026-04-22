@@ -4,6 +4,12 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+import concurrent.futures
+
+from app.core.config import settings
+from app.core.limiter import limiter
 
 from app.routes.predict import router as predict_router
 from app.services.data_service import data_service
@@ -15,9 +21,12 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Zkore Prediction API")
 
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=settings.ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -54,7 +63,7 @@ def list_upcoming(league_code: str):
 
     from app.core.pipeline import predict_match
 
-    for m in data["matches"]:
+    def fetch_prediction(m):
         try:
             h_id = m["homeTeam"]["id"]
             a_id = m["awayTeam"]["id"]
@@ -78,5 +87,9 @@ def list_upcoming(league_code: str):
             logger.warning(f"Failed to fetch quick prediction for {m['id']}: {e}")
             m["prediction"] = {"local": 33, "empate": 33, "visitante": 33}
             m["verdict"] = "?"
+        return m
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+        data["matches"] = list(executor.map(fetch_prediction, data["matches"]))
 
     return data

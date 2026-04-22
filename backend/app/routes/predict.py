@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request, BackgroundTasks
 import logging
 
 from app.services.data_service import data_service
@@ -6,13 +6,15 @@ from app.services.model_service import model_service
 from app.services.poisson_service import poisson_service
 
 from app.core.pipeline import predict_match
+from app.core.limiter import limiter
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
 @router.get("/predict")
-def predict(league_code: str, team_local: int, team_visitante: int):
+@limiter.limit("30/minute")
+def predict(request: Request, league_code: str, team_local: int, team_visitante: int, background_tasks: BackgroundTasks):
     # Parameter names match the user's requested specification
     if team_local == team_visitante:
         raise HTTPException(status_code=400, detail="Los equipos deben ser diferentes")
@@ -29,7 +31,9 @@ def predict(league_code: str, team_local: int, team_visitante: int):
             pass
 
     try:
-        response_data = predict_match(league_code, team_local, team_visitante, home_name, away_name)
+        response_data = predict_match(league_code, team_local, team_visitante, home_name, away_name, background_tasks=background_tasks)
+    except HTTPException:
+        raise
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
     except Exception as e:

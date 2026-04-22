@@ -30,13 +30,16 @@ class DataService:
     def _get_cache_path(self, key):
         return os.path.join(CACHE_DIR, f"{key}.json")
 
-    def _get_from_cache(self, key):
+    def _get_from_cache(self, key, ttl=None):
+        if ttl is None:
+            ttl = settings.CACHE_DURATION
+            
         cache_path = self._get_cache_path(key)
         if os.path.exists(cache_path):
             try:
                 with open(cache_path, "r", encoding="utf-8") as f:
                     entry = json.load(f)
-                if time.time() - entry["timestamp"] < settings.CACHE_DURATION:
+                if time.time() - entry["timestamp"] < ttl:
                     return entry["data"]
             except Exception as e:
                 logger.warning(f"Error reading cache for {key}: {e}")
@@ -107,7 +110,7 @@ class DataService:
         return data
 
     def get_historical_matches(self, league_code: str) -> list:
-        cached = self._get_from_cache(f"matches_{league_code}")
+        cached = self._get_from_cache(f"matches_{league_code}", ttl=settings.CACHE_DURATION_HISTORICAL)
         if cached:
             return cached
 
@@ -142,11 +145,6 @@ class DataService:
         self._set_to_cache(f"matches_{league_code}", matches)
         return matches
 
-    def _get_seeded_value(self, seed_str: str, min_val: float, max_val: float) -> float:
-        h_int = int(hashlib.md5(seed_str.encode()).hexdigest(), 16)
-        range_val = max_val - min_val
-        return min_val + (h_int % 1000) / 1000.0 * range_val
-
     def get_expected_match_stats(self, home_name: str, away_name: str):
         rate_limit = "Desconocido"
         try:
@@ -162,24 +160,20 @@ class DataService:
         except Exception:
             rate_limit = "Error de Conexión"
 
-        h_cards = self._get_seeded_value(home_name + "cards", 1.2, 4.2)
-        a_cards = self._get_seeded_value(away_name + "cards", 1.5, 4.8)
-        
-        h_shots = self._get_seeded_value(home_name + "shots", 3.2, 8.5)
-        a_shots = self._get_seeded_value(away_name + "shots", 2.1, 7.2)
-
         return {
-            "estadisticas_esperadas": {
-                "tarjetas_amarillas": {
-                    "local": round(h_cards, 1),
-                    "visitante": round(a_cards, 1)
-                },
-                "tiros_arco": {
-                    "local": round(h_shots, 1),
-                    "visitante": round(a_shots, 1)
-                }
-            },
+            "estadisticas_esperadas": None,
+            "nota": "Estadísticas en tiempo real próximamente disponibles",
             "rapidapi_rate_limit": rate_limit
         }
+
+    def invalidate_cache(self, league_code: str):
+        for prefix in ["matches", "standings"]:
+            key = f"{prefix}_{league_code}"
+            cache_path = self._get_cache_path(key)
+            if os.path.exists(cache_path):
+                try:
+                    os.remove(cache_path)
+                except Exception as e:
+                    logger.warning(f"Error invalidating cache for {key}: {e}")
 
 data_service = DataService()

@@ -195,10 +195,35 @@ async function openMatchDetail(homeId, awayId, homeName, visitName, homeCrest, v
             let errorMsg = "Error en la predicción avanzada";
             try {
                 const errData = await response.json();
-                if (errData && errData.detail) errorMsg = errData.detail;
+                if (errData && errData.detail) {
+                    errorMsg = typeof errData.detail === 'string' ? errData.detail : (errData.detail.message || errorMsg);
+                }
             } catch (e) {
                 // Keep default message if not JSON
             }
+            
+            if (response.status === 202) {
+                resultArea.innerHTML = `
+                    <div style="text-align: center; padding: 3rem;">
+                        <div class="spinner" style="margin: 0 auto 1rem auto; width: 50px; height: 50px; border-color: #60a5fa transparent #60a5fa transparent;"></div>
+                        <h3 style="color: #60a5fa; margin-bottom: 1rem;">Entrenando Modelo Inteligente</h3>
+                        <p style="color: #94a3b8;">${errorMsg}</p>
+                        <p style="color: #64748b; font-size: 0.85rem; margin-top: 1rem;">Por favor cierra esta ventana y vuelve a intentarlo en unos 15 a 30 segundos.</p>
+                    </div>`;
+                return;
+            }
+
+            if (response.status === 429 || response.status === 503) {
+                resultArea.innerHTML = `
+                    <div style="text-align: center; padding: 3rem;">
+                        <div style="font-size: 3rem; margin-bottom: 1rem;">⏱️</div>
+                        <h3 style="color: #fbbf24; margin-bottom: 1rem;">Límite de Consultas Alcanzado</h3>
+                        <p style="color: #94a3b8;">Has realizado demasiadas peticiones en muy poco tiempo.</p>
+                        <p style="color: #64748b; font-size: 0.85rem; margin-top: 1rem;">Espera un minuto antes de intentar de nuevo.</p>
+                    </div>`;
+                return;
+            }
+            
             throw new Error(errorMsg);
         }
         
@@ -261,6 +286,13 @@ function renderDetailedPrediction(data, localName, visitName, localCrest, visitC
                     </div>
                 </div>
             </div>`;
+    } else if (data.nota) {
+        advancedStatsHtml = `
+            <div class="section-title" style="margin-top:1.5rem">Métricas de Juego (API-Football)</div>
+            <div style="text-align: center; color: #94a3b8; font-size: 0.9rem; padding: 1rem; font-style: italic;">
+                ${data.nota}
+            </div>
+        `;
     }
 
     let p_l = data.probabilidades.local;

@@ -2,12 +2,22 @@ import os
 
 class Settings:
     # API Keys
-    FOOTBALL_DATA_API_KEY = os.getenv("FOOTBALL_DATA_API_KEY", "e4b22b463e054ef59664fd74fc3f94dd")
-    RAPIDAPI_KEY = os.getenv("RAPIDAPI_KEY", "ffcdab306fmshe3b6e9b4cd55ed4p137d4ejsn3d598ba17cff")
+    FOOTBALL_DATA_API_KEY = os.getenv("FOOTBALL_DATA_API_KEY")
+    if not FOOTBALL_DATA_API_KEY:
+        raise ValueError("FOOTBALL_DATA_API_KEY is required but not set in the environment.")
+        
+    RAPIDAPI_KEY = os.getenv("RAPIDAPI_KEY")
+    if not RAPIDAPI_KEY:
+        raise ValueError("RAPIDAPI_KEY is required but not set in the environment.")
+        
     RAPIDAPI_HOST = os.getenv("RAPIDAPI_HOST", "api-football-v1.p.rapidapi.com")
     
-    # Cache duration in seconds (1 hour default)
+    # Cache duration in seconds
     CACHE_DURATION = int(os.getenv("CACHE_DURATION", "3600"))
+    CACHE_DURATION_HISTORICAL = int(os.getenv("CACHE_DURATION_HISTORICAL", "86400"))
+    
+    # Security
+    ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "http://localhost:8000,http://127.0.0.1:8000").split(",")
     
     # Model configuration
     MIN_MATCHES_REQUIRED = 30

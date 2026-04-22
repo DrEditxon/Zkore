@@ -14,7 +14,7 @@ FEATURE_COLS = [
     "h2h_home_wins", "h2h_away_wins", "h2h_gd",
     "home_attack_vs_away_defense", "away_attack_vs_home_defense",
     "home_goal_rate", "away_goal_rate",
-    "home_xg_proxy", "away_xg_proxy"
+    "home_xg_proxy", "away_xg_proxy", "home_advantage"
 ]
 
 class FeatureService:
@@ -313,11 +313,6 @@ class FeatureService:
         
         df_pred = pd.DataFrame([row])
         
-        # Validation: Ensure EXACT columns match FEATURE_COLS
-        for col in FEATURE_COLS:
-            if col not in df_pred.columns:
-                df_pred[col] = 0.0
-                
         df_pred = df_pred[FEATURE_COLS] # re-order strictly
         
         if df_pred.empty or df_pred.isna().all().all():
