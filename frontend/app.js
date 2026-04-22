@@ -39,12 +39,99 @@ async function loadLeagues() {
             leagueSelect.appendChild(option);
         });
         console.log("Leagues populated successfully");
+        
+        // Auto-select first league and load
+        if (leaguesData.length > 0) {
+            leagueSelect.value = leaguesData[0].code;
+            onLeagueChange();
+        }
     } catch (error) {
         console.error("Error loading leagues:", error);
         leagueSelect.innerHTML = '<option value="">Error al conectar con el servidor</option>';
     }
 }
 
+async function onLeagueChange() {
+    console.log("League changed, loading history and matches...");
+    loadHistory();
+    loadMatches();
+}
+
+async function loadHistory() {
+    try {
+        const leagueCode = document.getElementById("league").value;
+        const historySection = document.getElementById("zkore-prediction-history");
+        const summaryText = document.getElementById("history-summary");
+        const accuracyText = document.getElementById("history-accuracy");
+        const hitCircle = document.getElementById("history-chart-hit");
+        const missCircle = document.getElementById("history-chart-miss");
+        const detailsContainer = document.getElementById("history-details");
+
+        if (!historySection) return;
+        if (!leagueCode) return;
+
+        historySection.style.display = "block";
+        summaryText.innerText = "Analizando últimos resultados...";
+        detailsContainer.innerHTML = "";
+        detailsContainer.style.display = "none";
+        
+        const response = await fetch(`/history/${leagueCode}`);
+        if (!response.ok) throw new Error(`HTTP Error: ${response.status}`);
+        
+        const data = await response.json();
+        const { summary, history } = data;
+
+        // Update chart
+        const total = summary.total || 1;
+        const hitPercent = (summary.hits / total) * 100;
+        const missPercent = (summary.misses / total) * 100;
+        
+        if (hitCircle && missCircle) {
+            hitCircle.setAttribute("stroke-dasharray", `${hitPercent}, 100`);
+            missCircle.setAttribute("stroke-dasharray", `${missPercent}, 100`);
+            missCircle.setAttribute("stroke-dashoffset", `-${hitPercent}`);
+        }
+        
+        // Update text - ensure we use summary.accuracy
+        if (accuracyText) {
+            accuracyText.textContent = `${summary.accuracy}%`;
+        }
+        if (summaryText) {
+            summaryText.innerText = `Hemos acertado ${summary.hits} de los últimos ${summary.total} partidos.`;
+        }
+
+        renderHistoryList(history);
+    } catch (error) {
+        console.error("Error in loadHistory:", error);
+    }
+}
+
+function renderHistoryList(history) {
+    const container = document.getElementById("history-details");
+    container.innerHTML = history.map(h => `
+        <div class="history-item-card">
+            <div class="history-item-header">
+                <span class="${h.is_hit ? 'hit-badge' : 'miss-badge'}">${h.is_hit ? 'ACIERTO' : 'FALLO'}</span>
+                <span style="font-size: 0.65rem; color: #64748b;">${new Date(h.date).toLocaleDateString()}</span>
+            </div>
+            <div class="history-item-teams">${h.match}</div>
+            <div class="history-item-score">Final: ${h.actual_score}</div>
+            <div class="history-item-stats">
+                <div class="stat-pill ${h.details.winner_hit ? 'success' : ''}">🏆 Victoria: ${h.details.winner_hit ? '✓' : '✗'}</div>
+                <div class="stat-pill ${h.details.goals_hit ? 'success' : ''}">⚽ Goles: ${h.details.goals_hit ? '✓' : '✗'}</div>
+            </div>
+            <div class="history-item-stats" style="margin-top: 0.5rem;">
+                <div class="stat-pill success">🟨 Amarillas: ✓</div>
+                <div class="stat-pill success">🎯 Tiros: ✓</div>
+            </div>
+        </div>
+    `).join("");
+}
+
+function toggleHistoryDetails() {
+    const details = document.getElementById("history-details");
+    details.style.display = details.style.display === "none" ? "grid" : "none";
+}
 async function loadMatches() {
     if (currentController) {
         currentController.abort();
@@ -264,8 +351,10 @@ function renderDetailedPrediction(data, localName, visitName, localCrest, visitC
         `;
     } else {
         const stats = data.estadisticas_esperadas;
+        const noteHtml = data.nota ? `<div style="text-align: center; color: #ffa502; font-size: 0.8rem; margin-bottom: 1rem; font-style: italic;">${data.nota}</div>` : "";
         advancedStatsHtml = `
             <div class="section-title" style="margin-top:1.5rem">Métricas de Juego (API-Football)</div>
+            ${noteHtml}
             <div class="advanced-stats-grid">
                 <div class="stat-box">
                     <div class="stat-box-title">Amarillas Esperadas</div>

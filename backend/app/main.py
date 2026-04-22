@@ -57,41 +57,5 @@ def list_leagues():
 
 @app.get("/upcoming/{league_code}")
 def list_upcoming(league_code: str, background_tasks: BackgroundTasks):
-    data = data_service.get_upcoming_matches(league_code)
-    if not data["matches"]:
-        return data
-        
-    model_service.ensure_model_ready(league_code, background_tasks)
+    return data_service.get_predicted_upcoming(league_code, background_tasks)
 
-    from app.core.pipeline import predict_match
-
-    def fetch_prediction(m):
-        try:
-            h_id = m["homeTeam"]["id"]
-            a_id = m["awayTeam"]["id"]
-            h_name = m["homeTeam"]["name"]
-            a_name = m["awayTeam"]["name"]
-            
-            res = predict_match(league_code, h_id, a_id, h_name, a_name, background_tasks=background_tasks)
-            p_hom = res["probabilidades"]["local"]
-            p_drw = res["probabilidades"]["empate"]
-            p_awy = res["probabilidades"]["visitante"]
-            
-            m["prediction"] = res["probabilidades"]
-            
-            if p_hom > p_drw and p_hom > p_awy:
-                m["verdict"] = "L"
-            elif p_awy > p_hom and p_awy > p_drw:
-                m["verdict"] = "V"
-            else:
-                m["verdict"] = "E"
-        except Exception as e:
-            logger.warning(f"Failed to fetch quick prediction for {m['id']}: {e}")
-            m["prediction"] = {"local": 33, "empate": 33, "visitante": 33}
-            m["verdict"] = "?"
-        return m
-
-    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
-        data["matches"] = list(executor.map(fetch_prediction, data["matches"]))
-
-    return data

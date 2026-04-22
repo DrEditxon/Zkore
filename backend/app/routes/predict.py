@@ -4,6 +4,7 @@ import logging
 from app.services.data_service import data_service
 from app.services.model_service import model_service
 from app.services.poisson_service import poisson_service
+from app.services.history_service import history_service
 
 from app.core.pipeline import predict_match
 from app.core.limiter import limiter
@@ -41,3 +42,7 @@ def predict(request: Request, league_code: str, team_local: int, team_visitante:
         raise HTTPException(status_code=500, detail="Error interno robusto del modelo de predicción")
 
     return response_data
+
+@router.get("/history/{league_code}")
+def get_history(league_code: str):
+    return history_service.get_league_history(league_code)
