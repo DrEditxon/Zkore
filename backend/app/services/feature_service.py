@@ -23,6 +23,10 @@ class FeatureService:
         return {
             "elo": 1500.0,
             "points": 0,
+            "home_points": 0,
+            "home_matches": 0,
+            "away_points": 0,
+            "away_matches": 0,
             "matches_played": 0,
             "clean_sheets": 0,
             "failed_to_score": 0,
@@ -109,6 +113,10 @@ class FeatureService:
                 away_gs_ewm = self._ewm_mean(a_state["recent_goals_scored"])
                 away_gc_ewm = self._ewm_mean(a_state["recent_goals_conceded"])
                 
+                h_home_ppg = h_state["home_points"] / max(1, h_state["home_matches"])
+                h_away_ppg = h_state["away_points"] / max(1, h_state["away_matches"])
+                h_adv = h_home_ppg - h_away_ppg
+                
                 row = {
                     "home_elo": h_state["elo"],
                     "away_elo": a_state["elo"],
@@ -153,7 +161,7 @@ class FeatureService:
                     "away_goal_rate": np.mean(a_state["recent_goals_scored"]) if a_state["recent_goals_scored"] else 0,
                     "home_xg_proxy": home_gs_ewm * away_gc_ewm,
                     "away_xg_proxy": away_gs_ewm * home_gc_ewm,
-                    "home_advantage": 1.0,
+                    "home_advantage": h_adv,
                     
                     # Labels (Target variables for Regressor)
                     "target_home_goals": home_goals,
@@ -212,6 +220,12 @@ class FeatureService:
             h_state["matches_played"] += 1
             a_state["matches_played"] += 1
             
+            h_state["home_matches"] += 1
+            a_state["away_matches"] += 1
+            
+            h_state["home_points"] += h_pts
+            a_state["away_points"] += a_pts
+            
             h_state["last_match_date"] = match_date
             a_state["last_match_date"] = match_date
             
@@ -264,6 +278,10 @@ class FeatureService:
         away_gs_ewm = self._ewm_mean(a_state["recent_goals_scored"])
         away_gc_ewm = self._ewm_mean(a_state["recent_goals_conceded"])
 
+        h_home_ppg = h_state["home_points"] / max(1, h_state["home_matches"])
+        h_away_ppg = h_state["away_points"] / max(1, h_state["away_matches"])
+        h_adv = h_home_ppg - h_away_ppg
+
         row = {
             "home_elo": h_state["elo"],
             "away_elo": a_state["elo"],
@@ -308,7 +326,7 @@ class FeatureService:
             "away_goal_rate": np.mean(a_state["recent_goals_scored"]) if a_state["recent_goals_scored"] else 0,
             "home_xg_proxy": home_gs_ewm * away_gc_ewm,
             "away_xg_proxy": away_gs_ewm * home_gc_ewm,
-            "home_advantage": 1.0,
+            "home_advantage": h_adv,
         }
         
         df_pred = pd.DataFrame([row])

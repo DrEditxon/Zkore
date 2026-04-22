@@ -2,7 +2,7 @@ import numpy as np
 from scipy.stats import poisson
 
 class PoissonService:
-    def __init__(self, max_goals: int = 5):
+    def __init__(self, max_goals: int = 8):
         self.max_goals = max_goals
 
     def calculate_probability_matrix(self, lambda_home: float, lambda_away: float, rho: float = 0.0) -> np.ndarray:

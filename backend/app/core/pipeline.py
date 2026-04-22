@@ -62,7 +62,16 @@ def predict_match(league_code: str, home_id: int, away_id: int, home_name: str, 
     # 5. External RapidAPI Fetch
     rapid_data = data_service.get_expected_match_stats(home_name, away_name)
 
-    conf = "Alta" if n_rows >= 100 else ("Media" if n_rows >= 50 else "Baja")
+    mae_home = payload.get("mae_home", 999)
+    mae_away = payload.get("mae_away", 999)
+    mae_avg = (mae_home + mae_away) / 2
+
+    if mae_home < 0.8 and mae_away < 0.8 and n_rows >= 100:
+        conf = "Alta"
+    elif mae_avg < 1.1 and n_rows >= 50:
+        conf = "Media"
+    else:
+        conf = "Baja"
 
     result = {
         "expected_goals": {
@@ -81,7 +90,11 @@ def predict_match(league_code: str, home_id: int, away_id: int, home_name: str, 
             "partidos_entrenados": n_rows,
             "confianza": conf,
             "tipo": "XGBoost Regressor + Poisson" + (" + Platt Calibrator" if calibrator else ""),
-            "explicacion": explicacion
+            "explicacion": explicacion,
+            "mae_home": round(mae_home, 3) if mae_home != 999 else None,
+            "mae_away": round(mae_away, 3) if mae_away != 999 else None,
+            "trained_at": payload.get("trained_at"),
+            "model_age_days": payload.get("model_age_days")
         }
     }
     

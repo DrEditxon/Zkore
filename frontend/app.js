@@ -7,11 +7,7 @@ document.addEventListener("DOMContentLoaded", () => {
     loadLeagues();
 });
 
-// Fallback if DOMContentLoaded already fired
-if (document.readyState === "complete" || document.readyState === "interactive") {
-    console.log("Document already ready - Initializing...");
-    loadLeagues();
-}
+let currentController = null;
 
 async function loadLeagues() {
     const leagueSelect = document.getElementById("league");
@@ -50,6 +46,11 @@ async function loadLeagues() {
 }
 
 async function loadMatches() {
+    if (currentController) {
+        currentController.abort();
+    }
+    currentController = new AbortController();
+
     const leagueSelect = document.getElementById("league");
     const leagueCode = leagueSelect.value;
     const section = document.getElementById("matches-section");
@@ -70,7 +71,7 @@ async function loadMatches() {
     if (subtitle) subtitle.style.display = "none";
 
     try {
-        const response = await fetch(`/upcoming/${leagueCode}`);
+        const response = await fetch(`/upcoming/${leagueCode}`, { signal: currentController.signal });
         if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
         
         const data = await response.json();
@@ -94,6 +95,10 @@ async function loadMatches() {
         
         setTimeout(triggerAnimations, 50);
     } catch (error) {
+        if (error.name === 'AbortError') {
+            console.log("Fetch abortado por nueva petición.");
+            return;
+        }
         console.error("Error loading matches:", error);
         loader.innerHTML = `<p style="color: #ff4757; padding: 2rem;">Error al obtener los partidos: ${error.message}</p>`;
     }
@@ -250,7 +255,14 @@ function renderDetailedPrediction(data, localName, visitName, localCrest, visitC
     if (data.rapidapi_rate_limit) showPushNotification(data.rapidapi_rate_limit);
 
     let advancedStatsHtml = "";
-    if (data.estadisticas_esperadas) {
+    if (!data.estadisticas_esperadas) {
+        advancedStatsHtml = `
+            <div class="section-title" style="margin-top:1.5rem">Métricas de Juego (API-Football)</div>
+            <div style="text-align: center; color: #94a3b8; font-size: 0.9rem; padding: 1rem; font-style: italic;">
+                📊 Estadísticas en tiempo real — Próximamente
+            </div>
+        `;
+    } else {
         const stats = data.estadisticas_esperadas;
         advancedStatsHtml = `
             <div class="section-title" style="margin-top:1.5rem">Métricas de Juego (API-Football)</div>
@@ -286,13 +298,6 @@ function renderDetailedPrediction(data, localName, visitName, localCrest, visitC
                     </div>
                 </div>
             </div>`;
-    } else if (data.nota) {
-        advancedStatsHtml = `
-            <div class="section-title" style="margin-top:1.5rem">Métricas de Juego (API-Football)</div>
-            <div style="text-align: center; color: #94a3b8; font-size: 0.9rem; padding: 1rem; font-style: italic;">
-                ${data.nota}
-            </div>
-        `;
     }
 
     let p_l = data.probabilidades.local;
@@ -311,6 +316,10 @@ function renderDetailedPrediction(data, localName, visitName, localCrest, visitC
             <span class="score-pct">${s.probabilidad}%</span>
         </div>`).join("");
 
+    let confClass = "confidence-baja";
+    if (info.confianza === "Alta") confClass = "confidence-alta";
+    else if (info.confianza === "Media") confClass = "confidence-media";
+
     resultArea.innerHTML = `
         <div class="modal-match-header">
             <div class="header-team">
@@ -328,7 +337,7 @@ function renderDetailedPrediction(data, localName, visitName, localCrest, visitC
         </div>
 
         <div class="model-badge">
-            🤖 ${info.tipo} &nbsp;·&nbsp; Confianza: <strong>${info.confianza}</strong>
+            🤖 ${info.tipo} &nbsp;·&nbsp; Confianza: <strong class="${confClass}">${info.confianza}</strong>
         </div>
         
         <div class="section-title">📊 ¿Por qué esta predicción?</div>

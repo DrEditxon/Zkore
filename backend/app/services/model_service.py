@@ -92,7 +92,8 @@ class ModelService:
             "xg_away": xg_away,
             "n_rows": len(df),
             "mae_home": mae_h,
-            "mae_away": mae_a
+            "mae_away": mae_a,
+            "trained_at": datetime.now().isoformat()
         }
         
         # Train Probability Calibrator
@@ -128,26 +129,35 @@ class ModelService:
         return payload
 
     def _load_model(self, league_code: str):
+        payload = None
         if league_code in self._model_cache:
-            return self._model_cache[league_code]
+            payload = self._model_cache[league_code]
+        else:
+            search_pattern = self._model_path(league_code, timestamp=False)
+            files = glob.glob(search_pattern)
             
-        search_pattern = self._model_path(league_code, timestamp=False)
-        files = glob.glob(search_pattern)
-        
-        if not files:
-            return None
-            
-        latest_file = max(files, key=os.path.getctime)
-        try:
-            payload = joblib.load(latest_file)
-            if "xg_home" not in payload:
-                return None
-            self._model_cache[league_code] = payload
-            logger.info(f"Loaded existing model for {league_code}: {os.path.basename(latest_file)}")
-            return payload
-        except Exception as e:
-            logger.error(f"Error loading model for {league_code} from {latest_file}: {e}")
-            return None
+            if files:
+                latest_file = max(files, key=os.path.getctime)
+                try:
+                    loaded = joblib.load(latest_file)
+                    if "xg_home" in loaded:
+                        payload = loaded
+                        self._model_cache[league_code] = payload
+                        logger.info(f"Loaded existing model for {league_code}: {os.path.basename(latest_file)}")
+                except Exception as e:
+                    logger.error(f"Error loading model for {league_code} from {latest_file}: {e}")
+                    
+        if payload:
+            if "trained_at" in payload:
+                trained_at = datetime.fromisoformat(payload["trained_at"])
+                age_days = (datetime.now() - trained_at).total_seconds() / 86400.0
+                payload["model_age_days"] = round(age_days, 2)
+                payload["is_stale"] = age_days > 7.0
+            else:
+                payload["model_age_days"] = 999.0
+                payload["is_stale"] = True
+                
+        return payload
 
     def predict_xg(self, league_code: str, home_team_id: int, away_team_id: int, background_tasks=None) -> tuple:
         """
@@ -157,6 +167,26 @@ class ModelService:
         matches = data_service.get_historical_matches(league_code)
 
         payload = self._load_model(league_code)
+        
+        def trigger_training(matches_data):
+            if self._training_in_progress.get(league_code):
+                return
+            logger.info(f"[{league_code}] Triggering background training...")
+            self._training_in_progress[league_code] = True
+            
+            def train_task():
+                try:
+                    self._train_and_save(league_code, matches_data)
+                except Exception as e:
+                    logger.error(f"Error training model for {league_code}: {e}")
+                finally:
+                    self._training_in_progress[league_code] = False
+                    
+            if background_tasks is not None:
+                background_tasks.add_task(train_task)
+            else:
+                train_task()
+
         if payload is None:
             if len(matches) < 10:
                 raise ValueError(
@@ -168,24 +198,16 @@ class ModelService:
                 from fastapi import HTTPException
                 raise HTTPException(status_code=202, detail={"status": "training", "message": f"Modelo para {league_code} en entrenamiento."})
                 
-            logger.info(f"[{league_code}] No model found. Triggering training...")
-            self._training_in_progress[league_code] = True
-            
-            def train_task():
-                try:
-                    self._train_and_save(league_code, matches)
-                except Exception as e:
-                    logger.error(f"Error training model for {league_code}: {e}")
-                finally:
-                    self._training_in_progress[league_code] = False
+            trigger_training(matches)
 
             if background_tasks is not None:
-                background_tasks.add_task(train_task)
                 from fastapi import HTTPException
                 raise HTTPException(status_code=202, detail={"status": "training", "message": f"Entrenamiento iniciado para {league_code}."})
             else:
-                train_task()
                 payload = self._load_model(league_code)
+        elif payload.get("is_stale", False):
+            logger.info(f"[{league_code}] Model is stale (Age: {payload.get('model_age_days')} days). Triggering re-training.")
+            trigger_training(matches)
 
         xg_home: XGBRegressor = payload["xg_home"]
         xg_away: XGBRegressor = payload["xg_away"]

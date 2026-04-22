@@ -929,3 +929,9 @@ select:focus {
     box-shadow: 0 4px 10px rgba(0,0,0,0.2);
 }
 .explanation-verdict strong { color: var(--primary); font-style: normal; }
+
+/* ── Confidence Levels ─────────────────────────────────────── */
+.confidence-alta { color: #2ed573 !important; }
+.confidence-media { color: #ffa502 !important; }
+.confidence-baja { color: #ff4757 !important; }
+
