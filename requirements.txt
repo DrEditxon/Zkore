@@ -38,3 +38,4 @@ urllib3==2.6.3
 uvicorn==0.44.0
 xgboost==3.2.0
 slowapi==0.1.9
+python-dotenv==1.0.1

@@ -6,3 +6,5 @@
 .ipynb_checkpoints/
 
 backend/cache/
+backend/models/
+*.joblib
