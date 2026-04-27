@@ -59,3 +59,19 @@ def list_leagues():
 def list_upcoming(league_code: str, background_tasks: BackgroundTasks):
     return data_service.get_predicted_upcoming(league_code, background_tasks)
 
+@app.get("/upcoming-basic/{league_code}")
+def list_upcoming_basic(league_code: str, background_tasks: BackgroundTasks):
+    """Returns matches immediately without predictions (for fast initial render)."""
+    data = data_service.get_upcoming_matches(league_code)
+    # Trigger model training in background so predictions are ready sooner
+    from app.services.model_service import model_service
+    try:
+        model_service.ensure_model_ready(league_code, background_tasks)
+    except Exception:
+        pass
+    for m in data.get("matches", []):
+        m["prediction"] = {"local": 33.3, "empate": 33.3, "visitante": 33.3}
+        m["verdict"] = "?"
+        m["loading"] = True
+    return data
+

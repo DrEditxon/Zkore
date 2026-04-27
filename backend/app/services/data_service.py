@@ -17,15 +17,16 @@ class DataService:
     def __init__(self):
         self.headers_football_data = {"X-Auth-Token": settings.FOOTBALL_DATA_API_KEY}
         self.headers_rapidapi = {
-            "x-rapidapi-key": settings.RAPIDAPI_KEY,
-            "x-rapidapi-host": settings.RAPIDAPI_HOST
+            "x-rapidapi-key":  settings.RAPIDAPI_KEY,
+            "x-rapidapi-host": settings.RAPIDAPI_HOST,
         }
-        
+
         # Robust HTTP session with retries
         self.session = requests.Session()
         retries = Retry(total=3, backoff_factor=0.5, status_forcelist=[500, 502, 503, 504, 429])
         self.session.mount("http://", HTTPAdapter(max_retries=retries))
         self.session.mount("https://", HTTPAdapter(max_retries=retries))
+
 
     def _get_cache_path(self, key):
         return os.path.join(CACHE_DIR, f"{key}.json")
@@ -33,7 +34,7 @@ class DataService:
     def _get_from_cache(self, key, ttl=None):
         if ttl is None:
             ttl = settings.CACHE_DURATION
-            
+
         cache_path = self._get_cache_path(key)
         if os.path.exists(cache_path):
             try:
@@ -72,7 +73,7 @@ class DataService:
             return {"matchday": 0, "matches": []}
 
         current_matchday = matches_raw[0].get("matchday", 0)
-        
+
         matches = []
         for m in matches_raw[:limit]:
             matches.append({
@@ -89,15 +90,18 @@ class DataService:
                     "crest": m["awayTeam"]["crest"]
                 }
             })
-        
+
         return {"matchday": current_matchday, "matches": matches}
 
     def get_predicted_upcoming(self, league_code: str, background_tasks=None):
         """
         Fetches upcoming matches and computes predictions in parallel with caching.
+        BUG FIX #1: Catches HTTPException(202) from ensure_model_ready so the page
+        never gets stuck on the loading spinner. Returns matches with default
+        predictions and a 'training' flag so the frontend can show a banner.
         """
         cache_key = f"predicted_upcoming_{league_code}"
-        cached = self._get_from_cache(cache_key, ttl=900) # Cache for 15 minutes
+        cached = self._get_from_cache(cache_key, ttl=900)
         if cached:
             return cached
 
@@ -107,33 +111,74 @@ class DataService:
 
         from app.services.model_service import model_service
         from app.core.pipeline import predict_match
+        from fastapi import HTTPException
         import concurrent.futures
 
-        model_service.ensure_model_ready(league_code, background_tasks)
+        # FIX #1a: Capture 202 gracefully — never let it bubble up to the router
+        model_ready = False
+        try:
+            model_service.ensure_model_ready(league_code, background_tasks)
+            model_ready = True
+        except HTTPException as e:
+            if e.status_code == 202:
+                logger.info(f"[{league_code}] Model training in progress. Returning matches without predictions.")
+                for m in data["matches"]:
+                    m["prediction"] = {"local": 33.3, "empate": 33.3, "visitante": 33.3}
+                    m["verdict"] = "?"
+                    m["training"] = True
+                data["training_in_progress"] = True
+                data["training_message"] = "Modelo entrenándose, las predicciones estarán listas en ~30 segundos."
+                return data
+            raise
+
+        if not model_ready:
+            for m in data["matches"]:
+                m["prediction"] = {"local": 33.3, "empate": 33.3, "visitante": 33.3}
+                m["verdict"] = "?"
+            return data
 
         def fetch_prediction(m):
             try:
                 res = predict_match(
-                    league_code, 
-                    m["homeTeam"]["id"], m["awayTeam"]["id"], 
-                    m["homeTeam"]["name"], m["awayTeam"]["name"], 
+                    league_code,
+                    m["homeTeam"]["id"], m["awayTeam"]["id"],
+                    m["homeTeam"]["name"], m["awayTeam"]["name"],
                     background_tasks=background_tasks
                 )
-                p_hom, p_drw, p_awy = res["probabilidades"]["local"], res["probabilidades"]["empate"], res["probabilidades"]["visitante"]
+                p_hom = res["probabilidades"]["local"]
+                p_drw = res["probabilidades"]["empate"]
+                p_awy = res["probabilidades"]["visitante"]
                 m["prediction"] = res["probabilidades"]
-                if p_hom > p_drw and p_hom > p_awy: m["verdict"] = "L"
-                elif p_awy > p_hom and p_awy > p_drw: m["verdict"] = "V"
-                else: m["verdict"] = "E"
+                if p_hom > p_drw and p_hom > p_awy:
+                    m["verdict"] = "L"
+                elif p_awy > p_hom and p_awy > p_drw:
+                    m["verdict"] = "V"
+                else:
+                    m["verdict"] = "E"
+            except HTTPException as e:
+                # Model started training mid-batch — mark gracefully
+                if e.status_code == 202:
+                    m["prediction"] = {"local": 33.3, "empate": 33.3, "visitante": 33.3}
+                    m["verdict"] = "?"
+                    m["training"] = True
+                else:
+                    logger.warning(f"HTTPException for match {m['id']}: {e.detail}")
+                    m["prediction"] = {"local": 33.3, "empate": 33.3, "visitante": 33.3}
+                    m["verdict"] = "?"
             except Exception as e:
                 logger.warning(f"Prediction failed for match {m['id']}: {e}")
                 m["prediction"] = {"local": 33.3, "empate": 33.3, "visitante": 33.3}
                 m["verdict"] = "?"
             return m
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
             data["matches"] = list(executor.map(fetch_prediction, data["matches"]))
 
-        self._set_to_cache(cache_key, data)
+        # Only cache if we got real predictions
+        any_training = any(m.get("training") for m in data["matches"])
+        if not any_training:
+            self._set_to_cache(cache_key, data)
+
         return data
 
     def get_standings(self, league_code: str):
@@ -148,7 +193,7 @@ class DataService:
         except requests.exceptions.RequestException as e:
             logger.error(f"Error fetching standings for {league_code}: {e}")
             return None
-        
+
         data = response.json()
         self._set_to_cache(f"standings_{league_code}", data)
         return data
@@ -189,111 +234,169 @@ class DataService:
         self._set_to_cache(f"matches_{league_code}", matches)
         return matches
 
-    def get_expected_match_stats(self, home_name: str, away_name: str, league_code: str):
-        """
-        Fetches real historical averages for cards and shots from RapidAPI (API-Football).
-        Optimized with internal caching and faster resolution.
-        """
-        rapid_league_id = {
-            "PL": 39, "PD": 140, "BL1": 78, "SA": 135, "FL1": 61,
-            "DED": 88, "PPL": 94, "BSA": 71, "ELC": 40, "CL": 2, "CLI": 13
-        }.get(league_code, 39)
-        
-        season = 2025
 
-        # Check if we are currently rate-limited (last 5 minutes)
-        if self._get_from_cache("rapidapi_suspended", ttl=300):
-            return self._get_fallback_stats("⚠️ API Suspendida temporalmente (Rate Limit)")
 
-        def get_team_id(name):
-            # Try exact match first
-            cache_key = f"rapid_team_id_{hashlib.md5(name.encode()).hexdigest()}"
-            cached = self._get_from_cache(cache_key, ttl=86400 * 30)
-            if cached: return cached
-            
-            try:
-                url = f"https://{settings.RAPIDAPI_HOST}/v3/teams"
-                res = self.session.get(url, headers=self.headers_rapidapi, params={"search": name}, timeout=3)
-                if res.status_code == 429:
-                    self._set_to_cache("rapidapi_suspended", True)
-                    return None
-                res.raise_for_status()
-                data = res.json()
-                if data.get("response"):
-                    tid = data["response"][0]["team"]["id"]
-                    self._set_to_cache(cache_key, tid)
-                    return tid
-            except Exception as e:
-                logger.warning(f"Error finding RapidAPI team ID for {name}: {e}")
-            return None
+    _RAPIDAPI_LEAGUE_MAP = {
+        "PL":  {"id": 39,  "season": 2024},
+        "PD":  {"id": 140, "season": 2024},
+        "BL1": {"id": 78,  "season": 2024},
+        "SA":  {"id": 135, "season": 2024},
+        "FL1": {"id": 61,  "season": 2024},
+        "PPL": {"id": 94,  "season": 2024},
+        "DED": {"id": 88,  "season": 2024},
+        "BSA": {"id": 71,  "season": 2024},
+        "ELC": {"id": 40,  "season": 2024},
+    }
 
-        def get_team_averages(team_id):
-            if not team_id: return None
-            cache_key = f"rapid_stats_{team_id}_{rapid_league_id}_{season}"
-            cached = self._get_from_cache(cache_key, ttl=86400)
-            if cached: return cached
-            
-            try:
-                url = f"https://{settings.RAPIDAPI_HOST}/v3/teams/statistics"
-                params = {"league": rapid_league_id, "season": season, "team": team_id}
-                res = self.session.get(url, headers=self.headers_rapidapi, params=params, timeout=3)
-                if res.status_code == 429:
-                    self._set_to_cache("rapidapi_suspended", True)
-                    return None
-                res.raise_for_status()
-                data = res.json()
-                if data.get("response"):
-                    stats = data["response"]
-                    played = stats.get("fixtures", {}).get("played", {}).get("total", 0)
-                    if played > 0:
-                        yellow_cards = stats.get("cards", {}).get("yellow", {})
-                        total_yellow = yellow_cards.get("total") or 0
-                        if not total_yellow and isinstance(yellow_cards, dict):
-                            total_yellow = sum([v.get("total", 0) for k, v in yellow_cards.items() if k != "total" and isinstance(v, dict)])
-                        
-                        return {"avg_yellow": round(total_yellow / played, 2), "played": played}
-            except Exception as e:
-                logger.warning(f"Error fetching RapidAPI stats for team {team_id}: {e}")
-            return None
+    # League-based heuristic fallback (used when RapidAPI is unavailable)
+    _HEURISTIC_BASE = {
+        "PL":  {"yellow": 1.8, "shots": 4.8},
+        "PD":  {"yellow": 2.5, "shots": 4.2},
+        "BL1": {"yellow": 2.1, "shots": 4.5},
+        "SA":  {"yellow": 2.3, "shots": 4.3},
+        "FL1": {"yellow": 2.0, "shots": 4.0},
+        "BSA": {"yellow": 2.8, "shots": 3.8},
+        "PPL": {"yellow": 2.2, "shots": 4.1},
+        "DED": {"yellow": 1.9, "shots": 4.4},
+        "ELC": {"yellow": 2.0, "shots": 4.3},
+    }
 
-        # Fetch IDs and stats in parallel for this match
-        import concurrent.futures
-        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
-            h_id_future = executor.submit(get_team_id, home_name)
-            a_id_future = executor.submit(get_team_id, away_name)
-            h_id = h_id_future.result()
-            a_id = a_id_future.result()
-
-            h_stats_future = executor.submit(get_team_averages, h_id)
-            a_stats_future = executor.submit(get_team_averages, a_id)
-            h_stats = h_stats_future.result()
-            a_stats = a_stats_future.result()
-        
-        rate_limit = self._get_from_cache("rapidapi_limit_count", ttl=60) or "Calculando..."
-        
-        if h_stats and a_stats:
-            return {
-                "estadisticas_esperadas": {
-                    "tarjetas_amarillas": {"local": h_stats["avg_yellow"], "visitante": a_stats["avg_yellow"]},
-                    "tiros_arco": {"local": 4.8, "visitante": 3.9} # Static for now to speed up
-                },
-                "rapidapi_rate_limit": rate_limit
-            }
-
-        return self._get_fallback_stats("⚠️ Usando promedios históricos")
-
-    def _get_fallback_stats(self, nota: str):
+    def _heuristic_stats(self, league_code: str, source: str = "Heurísticas de liga"):
+        base = self._HEURISTIC_BASE.get(league_code, {"yellow": 2.1, "shots": 4.2})
         return {
             "estadisticas_esperadas": {
-                "tarjetas_amarillas": {"local": 2.2, "visitante": 1.9},
-                "tiros_arco": {"local": 4.5, "visitante": 3.5}
+                "tarjetas_amarillas": {
+                    "local":     round(base["yellow"] * 0.95, 2),
+                    "visitante": round(base["yellow"] * 1.05, 2),
+                },
+                "tiros_arco": {
+                    "local":     round(base["shots"] * 1.10, 2),
+                    "visitante": round(base["shots"] * 0.90, 2),
+                },
             },
-            "nota": nota,
-            "rapidapi_rate_limit": "Limitado"
+            "nota": source,
+            "rapidapi_rate_limit": "N/A",
         }
 
+    def _get_rapidapi_team_id(self, team_name: str, league_id: int, season: int) -> int | None:
+        """Search api-football for a team by name within a specific league/season."""
+        cache_key = f"rapidapi_team_{league_id}_{season}_{hashlib.md5(team_name.encode()).hexdigest()[:8]}"
+        cached = self._get_from_cache(cache_key, ttl=86400 * 7)  # 7-day cache
+        if cached is not None:
+            return cached
+
+        try:
+            url = f"https://{settings.RAPIDAPI_HOST}/teams"
+            params = {"name": team_name, "league": league_id, "season": season}
+            resp = self.session.get(url, headers=self.headers_rapidapi, params=params, timeout=5)
+            resp.raise_for_status()
+            data = resp.json()
+            teams = data.get("response", [])
+            if teams:
+                team_id = teams[0]["team"]["id"]
+                self._set_to_cache(cache_key, team_id)
+                return team_id
+        except Exception as e:
+            logger.warning(f"[RapidAPI] Team lookup failed for '{team_name}': {e}")
+        return None
+
+    def _get_rapidapi_team_stats(self, team_id: int, league_id: int, season: int) -> dict | None:
+        """Fetch season statistics for a team from api-football."""
+        cache_key = f"rapidapi_stats_{team_id}_{league_id}_{season}"
+        cached = self._get_from_cache(cache_key, ttl=86400)  # 24h cache
+        if cached is not None:
+            return cached
+
+        try:
+            url = f"https://{settings.RAPIDAPI_HOST}/teams/statistics"
+            params = {"team": team_id, "league": league_id, "season": season}
+            resp = self.session.get(url, headers=self.headers_rapidapi, params=params, timeout=5)
+            resp.raise_for_status()
+            data = resp.json()
+            stats = data.get("response", {})
+            if stats:
+                self._set_to_cache(cache_key, stats)
+                return stats
+        except Exception as e:
+            logger.warning(f"[RapidAPI] Stats fetch failed for team {team_id}: {e}")
+        return None
+
+    def get_expected_match_stats(self, home_name: str, away_name: str, league_code: str) -> dict:
+        """
+        Fetches real team stats from api-football (RapidAPI) for the current season.
+        Falls back gracefully to league heuristics if the key is missing, the API
+        is rate-limited, or the request times out.
+        """
+        if not settings.RAPIDAPI_KEY:
+            return self._heuristic_stats(league_code, "Heurísticas de liga (sin clave RapidAPI)")
+
+        league_meta = self._RAPIDAPI_LEAGUE_MAP.get(league_code)
+        if not league_meta:
+            return self._heuristic_stats(league_code, "Liga no mapeada en RapidAPI")
+
+        league_id = league_meta["id"]
+        season    = league_meta["season"]
+
+        try:
+            home_id = self._get_rapidapi_team_id(home_name, league_id, season)
+            away_id = self._get_rapidapi_team_id(away_name, league_id, season)
+
+            if not home_id or not away_id:
+                logger.info(f"[RapidAPI] Team IDs not found for {home_name}/{away_name}, using heuristics")
+                return self._heuristic_stats(league_code, "Equipos no encontrados en RapidAPI — usando heurísticas")
+
+            home_stats = self._get_rapidapi_team_stats(home_id, league_id, season)
+            away_stats = self._get_rapidapi_team_stats(away_id, league_id, season)
+
+            if not home_stats or not away_stats:
+                return self._heuristic_stats(league_code, "Estadísticas no disponibles — usando heurísticas")
+
+            def _safe(stats, *keys, default=0.0):
+                val = stats
+                for k in keys:
+                    val = val.get(k, {}) if isinstance(val, dict) else {}
+                return float(val) if isinstance(val, (int, float)) else default
+
+            # Yellow cards per game
+            home_yellow_total = _safe(home_stats, "cards", "yellow", "total", default=0)
+            away_yellow_total = _safe(away_stats, "cards", "yellow", "total", default=0)
+            home_games        = max(1, _safe(home_stats, "fixtures", "played", "total", default=1))
+            away_games        = max(1, _safe(away_stats, "fixtures", "played", "total", default=1))
+            home_yellow_pg    = round(home_yellow_total / home_games, 2)
+            away_yellow_pg    = round(away_yellow_total / away_games, 2)
+
+            # Shots on target per game
+            home_shots_total  = _safe(home_stats, "shots", "on", "total", default=0)
+            away_shots_total  = _safe(away_stats, "shots", "on", "total", default=0)
+            home_shots_pg     = round(home_shots_total / home_games, 2)
+            away_shots_pg     = round(away_shots_total / away_games, 2)
+
+            logger.info(f"[RapidAPI] Real stats: {home_name} yel={home_yellow_pg} sot={home_shots_pg} | "
+                        f"{away_name} yel={away_yellow_pg} sot={away_shots_pg}")
+
+            return {
+                "estadisticas_esperadas": {
+                    "tarjetas_amarillas": {
+                        "local":     home_yellow_pg,
+                        "visitante": away_yellow_pg,
+                    },
+                    "tiros_arco": {
+                        "local":     home_shots_pg,
+                        "visitante": away_shots_pg,
+                    },
+                },
+                "nota": f"Estadísticas reales de la temporada {season} (api-football)",
+                "rapidapi_rate_limit": "Activo",
+            }
+
+        except Exception as e:
+            logger.warning(f"[RapidAPI] Unexpected error for {home_name} vs {away_name}: {e}")
+            return self._heuristic_stats(league_code, "Error en RapidAPI — usando heurísticas de respaldo")
+
+
+
     def invalidate_cache(self, league_code: str):
-        for prefix in ["matches", "standings"]:
+        for prefix in ["matches", "standings", "predicted_upcoming"]:
             key = f"{prefix}_{league_code}"
             cache_path = self._get_cache_path(key)
             if os.path.exists(cache_path):

@@ -1,10 +1,17 @@
+# Python
 .venv/
 **/__pycache__/
 *.py[cod]
 *$py.class
-.env
 .ipynb_checkpoints/
 
+# Secrets — NEVER commit
+.env
+
+# Local cache (Render uses its persistent disk instead)
 backend/cache/
-backend/models/
-*.joblib
+
+# Compiled models — excluded from git since Render's persistent disk stores them.
+# To pre-load a model on first deploy, remove the *.joblib line temporarily.
+backend/app/models/*.joblib
+backend/app/models/*.lock

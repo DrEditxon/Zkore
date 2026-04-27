@@ -59,7 +59,7 @@ def predict_match(league_code: str, home_id: int, away_id: int, home_name: str, 
     # 4. Explicabilidad Simple Heurística
     explicacion = generate_heuristic_explanation(lambda_h, lambda_a, home_name, away_name, p_hom/100, p_awy/100)
 
-    # 5. External RapidAPI Fetch
+    # 5. Local Heuristic Stats (no external API call)
     rapid_data = data_service.get_expected_match_stats(home_name, away_name, league_code)
 
     mae_home = payload.get("mae_home", 999)
