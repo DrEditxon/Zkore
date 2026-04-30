@@ -10,8 +10,10 @@ class Settings:
     if not FOOTBALL_DATA_API_KEY:
         raise ValueError("FOOTBALL_DATA_API_KEY is required but not set in the environment.")
 
-    # RapidAPI — optional: if key is missing, stats fall back to league heuristics automatically
-    RAPIDAPI_KEY  = os.getenv("RAPIDAPI_KEY", "")
+    RAPIDAPI_KEY = os.getenv("RAPIDAPI_KEY", "")
+    if not RAPIDAPI_KEY:
+        print("[WARNING] RAPIDAPI_KEY is not set. Detailed stats in modals will use fallbacks.")
+
     RAPIDAPI_HOST = os.getenv("RAPIDAPI_HOST", "api-football-v1.p.rapidapi.com")
 
     # Cache duration in seconds
@@ -24,6 +26,10 @@ class Settings:
 
     # Model configuration
     MIN_MATCHES_REQUIRED = int(os.getenv("MIN_MATCHES_REQUIRED", "30"))
+
+    # Supabase
+    SUPABASE_URL = os.getenv("SUPABASE_URL", "")
+    SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")
 
     # FIX #10: Removed CL and CLI — no trained models exist for them.
     # Add them back once models are trained and included in backend/app/models/.

@@ -2,46 +2,30 @@ services:
   - type: web
     name: zkore-prediction-api
     env: python
-    region: oregon
-
-    # Persistent disk: keeps trained models AND API cache across deploys/restarts
     disk:
-      name: zkore-data
+      name: zkore-models-cache
       mountPath: /opt/render/project/src/backend/app/models
       sizeGB: 1
-
-    # Install all Python dependencies from root requirements.txt
     buildCommand: pip install -r requirements.txt
-
-    # PYTHONPATH=backend makes 'app.main:app' resolve correctly from repo root
-    startCommand: gunicorn -w 2 -k uvicorn.workers.UvicornWorker --timeout 120 --bind 0.0.0.0:$PORT app.main:app
-
+    startCommand: gunicorn -w 2 -k uvicorn.workers.UvicornWorker --timeout 120 --bind 0.0.0.0:$PORT backend.app.main:app
     envVars:
       - key: PYTHON_VERSION
-        value: "3.11.0"
-
-      # Makes 'from app.xxx import ...' resolve correctly when running from repo root
-      - key: PYTHONPATH
-        value: backend
-
-      # Required — set in Render dashboard (never commit to git)
+        value: "3.10.0"
       - key: FOOTBALL_DATA_API_KEY
         sync: false
-
-      # Optional — RapidAPI for real match stats (falls back to heuristics if missing/invalid)
       - key: RAPIDAPI_KEY
         sync: false
       - key: RAPIDAPI_HOST
         value: api-football-v1.p.rapidapi.com
-
-      # Performance & behaviour
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_KEY
+        sync: false
+      - key: ALLOWED_ORIGINS
+        value: "*"
       - key: CACHE_DURATION
         value: "3600"
       - key: CACHE_DURATION_HISTORICAL
         value: "86400"
       - key: MIN_MATCHES_REQUIRED
         value: "30"
-
-      # CORS — allow all origins (frontend served from same origin)
-      - key: ALLOWED_ORIGINS
-        value: "*"

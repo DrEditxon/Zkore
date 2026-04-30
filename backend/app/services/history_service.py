@@ -28,11 +28,12 @@ class HistoryService:
                 # Note: This might be slightly biased if the model was trained on these matches,
                 # but it serves the user's purpose of "visualizing accuracy".
                 prediction = predict_match(
-                    league_code, 
-                    m['homeTeam_id'], 
-                    m['awayTeam_id'], 
-                    m['homeTeam_name'], 
-                    m['awayTeam_name']
+                    league_code,
+                    m['homeTeam_id'],
+                    m['awayTeam_id'],
+                    m['homeTeam_name'],
+                    m['awayTeam_name'],
+                    include_rapid_stats=False,   # No need for RapidAPI stats in history eval
                 )
                 
                 # Actual Result
@@ -83,8 +84,6 @@ class HistoryService:
                     "details": {
                         "winner_hit": winner_hit,
                         "goals_hit": goals_hit,
-                        "cards_hit": True, # Placeholder
-                        "shots_hit": True  # Placeholder
                     }
                 }
             except Exception as e:
