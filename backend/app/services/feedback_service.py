@@ -54,12 +54,17 @@ class FeedbackService:
 
         # 1. Load finished matches from the API (or disk cache)
         finished = data_service.get_historical_matches(league_code)
-        if not finished:
-            return {"resolved": 0, "avg_brier": None, "drift_detected": False}
-
+        
         # Build lookup: match_id → result (we use (home_name, away_name, date) as key
         # since football-data doesn't expose match IDs directly in our stored format)
         result_lookup = self._build_result_lookup(finished)
+
+        # 1.5 Live Feedback Loop: Enrich with instant results from ESPN
+        # football-data is often slow to update finished matches. ESPN is real-time.
+        espn_results = self._fetch_espn_recent_results(league_code)
+        if espn_results:
+            logger.info(f"[Feedback] [{league_code}] Injected {len(espn_results)} live results from ESPN.")
+            result_lookup.update(espn_results)
 
         # 2. Fetch unresolved predictions from Supabase
         unresolved = supabase_service.get_unresolved_predictions(league_code)
@@ -117,6 +122,9 @@ class FeedbackService:
         Value: {"actual_home": int, "actual_away": int, "verdict": str}
         """
         lookup = {}
+        if not finished:
+            return lookup
+            
         for m in finished:
             date_key = m["utcDate"][:10]   # YYYY-MM-DD
             key = (
@@ -130,6 +138,66 @@ class FeedbackService:
                 "actual_away": a,
                 "verdict": "L" if h > a else ("V" if a > h else "E"),
             }
+        return lookup
+
+    def _fetch_espn_recent_results(self, league_code: str) -> dict:
+        """
+        Fetches the current ESPN scoreboard and returns a lookup dict of matches
+        that have just completed (Full Time). This bypasses the delay in football-data.
+        """
+        import requests
+        from app.services.market_service import ESPN_MAP
+        
+        espn_code = ESPN_MAP.get(league_code)
+        if not espn_code:
+            return {}
+            
+        lookup = {}
+        try:
+            url = f"https://site.api.espn.com/apis/site/v2/sports/soccer/{espn_code}/scoreboard"
+            r = requests.get(url, timeout=10)
+            if r.status_code != 200:
+                return lookup
+                
+            data = r.json()
+            for ev in data.get("events", []):
+                # Only process matches that are actually finished
+                status = ev.get("status", {}).get("type", {})
+                if not status.get("completed", False):
+                    continue
+                    
+                comp = ev.get("competitions", [])[0] if ev.get("competitions") else {}
+                competitors = comp.get("competitors", [])
+                if len(competitors) < 2:
+                    continue
+                    
+                # ESPN standard: index 0 is usually home, index 1 is away, but let's check homeAway flag
+                home_c = next((c for c in competitors if c.get("homeAway") == "home"), competitors[0])
+                away_c = next((c for c in competitors if c.get("homeAway") == "away"), competitors[1])
+                
+                h_name = home_c.get("team", {}).get("name", "").lower().strip()
+                a_name = away_c.get("team", {}).get("name", "").lower().strip()
+                
+                h_score = int(home_c.get("score", 0))
+                a_score = int(away_c.get("score", 0))
+                
+                # ESPN dates are in ISO format (e.g. 2026-05-01T20:00Z)
+                date_str = ev.get("date", "")[:10]
+                
+                # Remove FC/FCs from ESPN names for better matching
+                h_name = h_name.replace(" fc", "").replace("fc ", "")
+                a_name = a_name.replace(" fc", "").replace("fc ", "")
+                
+                key = (h_name, a_name, date_str)
+                lookup[key] = {
+                    "actual_home": h_score,
+                    "actual_away": a_score,
+                    "verdict": "L" if h_score > a_score else ("V" if a_score > h_score else "E")
+                }
+                
+        except Exception as e:
+            logger.error(f"[Feedback] ESPN live score fetch failed for {league_code}: {e}")
+            
         return lookup
 
     def _match_result(self, pred: dict, result_lookup: dict) -> dict | None:
