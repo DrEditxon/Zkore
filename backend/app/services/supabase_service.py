@@ -27,6 +27,13 @@ class SupabaseService:
                 "apikey": self.key,
                 "Authorization": f"Bearer {self.key}",
             }
+            
+            from requests.adapters import HTTPAdapter
+            from urllib3.util.retry import Retry
+            self.session = requests.Session()
+            retries = Retry(total=3, backoff_factor=0.5, status_forcelist=[500, 502, 503, 504, 429])
+            self.session.mount("http://", HTTPAdapter(max_retries=retries, pool_connections=10, pool_maxsize=10))
+            self.session.mount("https://", HTTPAdapter(max_retries=retries, pool_connections=10, pool_maxsize=10))
         else:
             logger.warning("[Supabase] URL or Key not set — integration disabled.")
 
@@ -50,7 +57,7 @@ class SupabaseService:
                 "verdict":     prediction_data["verdict"],
                 "utc_date":    prediction_data["utc_date"],
             }
-            r = requests.post(endpoint, headers=self.headers, json=data, timeout=5)
+            r = self.session.post(endpoint, headers=self.headers, json=data, timeout=5)
             if r.status_code not in (200, 201, 204):
                 logger.error(f"[Supabase] Failed to save prediction: {r.text}")
         except Exception as e:
@@ -65,7 +72,7 @@ class SupabaseService:
                 f"{self.url}/rest/v1/predictions"
                 f"?league_code=eq.{league_code}&order=utc_date.desc&limit={limit}"
             )
-            r = requests.get(endpoint, headers=self.headers, timeout=5)
+            r = self.session.get(endpoint, headers=self.headers, timeout=5)
             return r.json() if r.status_code == 200 else []
         except Exception as e:
             logger.error(f"[Supabase] get_history error: {e}")
@@ -79,7 +86,7 @@ class SupabaseService:
             from datetime import datetime, timezone
             today_str = datetime.now(timezone.utc).isoformat()
             endpoint = f"{self.url}/rest/v1/predictions?utc_date=gte.{today_str}&limit=100"
-            r = requests.get(endpoint, headers=self.headers, timeout=5)
+            r = self.session.get(endpoint, headers=self.headers, timeout=5)
             if r.status_code != 200:
                 return []
             predictions = r.json()
@@ -113,8 +120,7 @@ class SupabaseService:
         if not self.enabled:
             return False
         try:
-            # Try to get the specific bucket
-            r = requests.get(
+            r = self.session.get(
                 f"{self.url}/storage/v1/bucket/{bucket_name}",
                 headers=self.storage_headers,
                 timeout=5,
@@ -125,7 +131,7 @@ class SupabaseService:
 
             # Bucket not found — create it
             logger.info(f"[Supabase Storage] Bucket '{bucket_name}' not found — creating...")
-            r2 = requests.post(
+            r2 = self.session.post(
                 f"{self.url}/storage/v1/bucket",
                 headers={**self.storage_headers, "Content-Type": "application/json"},
                 json={"id": bucket_name, "name": bucket_name, "public": False},
@@ -154,7 +160,7 @@ class SupabaseService:
             return False
         filename = f"{league_code}_xgb_latest.joblib"
         try:
-            r = requests.post(
+            r = self.session.post(
                 f"{self.url}/storage/v1/object/{bucket}/{filename}",
                 headers={
                     **self.storage_headers,
@@ -186,7 +192,7 @@ class SupabaseService:
             return None
         filename = f"{league_code}_xgb_latest.joblib"
         try:
-            r = requests.get(
+            r = self.session.get(
                 f"{self.url}/storage/v1/object/{bucket}/{filename}",
                 headers=self.storage_headers,
                 timeout=60,
@@ -215,7 +221,7 @@ class SupabaseService:
         if not self.enabled:
             return []
         try:
-            r = requests.post(
+            r = self.session.post(
                 f"{self.url}/storage/v1/object/list/{bucket}",
                 headers={**self.storage_headers, "Content-Type": "application/json"},
                 json={"prefix": "", "limit": 200},

@@ -3,7 +3,8 @@ import numpy as np
 
 # Use the same list across model and feature creation
 FEATURE_COLS = [
-    "home_elo", "away_elo", "elo_diff",
+    "home_attack_elo", "home_defense_elo", "away_attack_elo", "away_defense_elo",
+    "home_atk_vs_away_def", "away_atk_vs_home_def",
     "home_points_per_game", "away_points_per_game",
     "home_rest_days", "away_rest_days", "rest_days_diff",
     "home_form_pts", "away_form_pts", "form_diff",
@@ -44,7 +45,8 @@ class FeatureService:
 
     def _init_team_state(self):
         return {
-            "elo": 1500.0,
+            "attack_elo": 1500.0,
+            "defense_elo": 1500.0,
             "points": 0,
             "home_points": 0,
             "home_matches": 0,
@@ -61,15 +63,17 @@ class FeatureService:
             "recent_results": []
         }
 
-    def _update_elo(self, rating_a, rating_b, actual_score_a, margin, k=20):
-        expected_a = 1.0 / (1.0 + 10.0 ** ((rating_b - rating_a) / 400.0))
-        if margin <= 1:
-            mov = 1.0
-        elif margin == 2:
-            mov = 1.5
-        else:
-            mov = (11 + margin) / 8.0
-        return rating_a + k * mov * (actual_score_a - expected_a)
+    def _update_elo_attack_defense(self, atk_rating, def_rating, goals_scored, k=20):
+        expected = 1.0 / (1.0 + 10.0 ** ((def_rating - atk_rating) / 400.0))
+        if goals_scored == 0: actual = 0.0
+        elif goals_scored == 1: actual = 0.5
+        elif goals_scored == 2: actual = 0.8
+        else: actual = 1.0
+        
+        mov = 1.0 if goals_scored <= 1 else (11.0 + goals_scored) / 8.0
+        change = k * mov * (actual - expected)
+        
+        return atk_rating + change, def_rating - change
 
     def _compute_all_features(self, matches: list) -> tuple:
         """
@@ -119,6 +123,14 @@ class FeatureService:
             h2h     = h2h_states[pair]
             is_home_A = (home_id == pair[0])
 
+            # FASE 2: Regresión a la media (Shrinkage) en cambios de temporada
+            if h_state["last_match_date"] and (match_date - h_state["last_match_date"]).days > 60:
+                h_state["attack_elo"] = 1500.0 + 0.85 * (h_state["attack_elo"] - 1500.0)
+                h_state["defense_elo"] = 1500.0 + 0.85 * (h_state["defense_elo"] - 1500.0)
+            if a_state["last_match_date"] and (match_date - a_state["last_match_date"]).days > 60:
+                a_state["attack_elo"] = 1500.0 + 0.85 * (a_state["attack_elo"] - 1500.0)
+                a_state["defense_elo"] = 1500.0 + 0.85 * (a_state["defense_elo"] - 1500.0)
+
             if h_state["matches_played"] < 3 or a_state["matches_played"] < 3:
                 features_list.append(None)
             else:
@@ -147,9 +159,12 @@ class FeatureService:
                 h2h_away_goals = h2h["g_B"] if is_home_A else h2h["g_A"]
 
                 features_list.append({
-                    "home_elo":   h_state["elo"],
-                    "away_elo":   a_state["elo"],
-                    "elo_diff":   h_state["elo"] - a_state["elo"],
+                    "home_attack_elo": h_state["attack_elo"],
+                    "home_defense_elo": h_state["defense_elo"],
+                    "away_attack_elo": a_state["attack_elo"],
+                    "away_defense_elo": a_state["defense_elo"],
+                    "home_atk_vs_away_def": h_state["attack_elo"] - a_state["defense_elo"],
+                    "away_atk_vs_home_def": a_state["attack_elo"] - h_state["defense_elo"],
 
                     "home_points_per_game": h_state["points"] / h_mp,
                     "away_points_per_game": a_state["points"] / a_mp,
@@ -196,14 +211,16 @@ class FeatureService:
                 })
 
             # ── UPDATE STATE POST-MATCH ────────────────────────────────────
-            margin   = abs(home_goals - away_goals)
-            h_actual = 1.0 if home_goals > away_goals else (0.5 if home_goals == away_goals else 0.0)
-            a_actual = 1.0 - h_actual
-
-            new_h_elo = self._update_elo(h_state["elo"], a_state["elo"], h_actual, margin)
-            new_a_elo = self._update_elo(a_state["elo"], h_state["elo"], a_actual, margin)
-            h_state["elo"] = new_h_elo
-            a_state["elo"] = new_a_elo
+            new_h_atk, new_a_def = self._update_elo_attack_defense(
+                h_state["attack_elo"], a_state["defense_elo"], home_goals
+            )
+            new_a_atk, new_h_def = self._update_elo_attack_defense(
+                a_state["attack_elo"], h_state["defense_elo"], away_goals
+            )
+            h_state["attack_elo"] = new_h_atk
+            a_state["defense_elo"] = new_a_def
+            a_state["attack_elo"] = new_a_atk
+            h_state["defense_elo"] = new_h_def
 
             if home_goals > away_goals:
                 h_pts, a_pts = 3, 0
@@ -306,10 +323,25 @@ class FeatureService:
         h_away_ppg = h_state["away_points"] / max(1, h_state["away_matches"])
         h_adv      = h_home_ppg - h_away_ppg
 
+        h_atk_elo = h_state["attack_elo"]
+        h_def_elo = h_state["defense_elo"]
+        if h_state["last_match_date"] and (today - h_state["last_match_date"]).days > 60:
+            h_atk_elo = 1500.0 + 0.85 * (h_atk_elo - 1500.0)
+            h_def_elo = 1500.0 + 0.85 * (h_def_elo - 1500.0)
+            
+        a_atk_elo = a_state["attack_elo"]
+        a_def_elo = a_state["defense_elo"]
+        if a_state["last_match_date"] and (today - a_state["last_match_date"]).days > 60:
+            a_atk_elo = 1500.0 + 0.85 * (a_atk_elo - 1500.0)
+            a_def_elo = 1500.0 + 0.85 * (a_def_elo - 1500.0)
+
         row = {
-            "home_elo":   h_state["elo"],
-            "away_elo":   a_state["elo"],
-            "elo_diff":   h_state["elo"] - a_state["elo"],
+            "home_attack_elo": h_atk_elo,
+            "home_defense_elo": h_def_elo,
+            "away_attack_elo": a_atk_elo,
+            "away_defense_elo": a_def_elo,
+            "home_atk_vs_away_def": h_atk_elo - a_def_elo,
+            "away_atk_vs_home_def": a_atk_elo - h_def_elo,
 
             "home_points_per_game": h_state["points"] / h_mp,
             "away_points_per_game": a_state["points"] / a_mp,

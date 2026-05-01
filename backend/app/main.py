@@ -2,7 +2,7 @@ import logging
 import os
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, BackgroundTasks
+from fastapi import FastAPI, BackgroundTasks, Depends
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -11,7 +11,8 @@ from slowapi.errors import RateLimitExceeded
 
 from app.core.config import settings
 from app.core.limiter import limiter
-from app.core.scheduler import start_scheduler          # BUG D FIX
+from app.core.scheduler import start_scheduler
+from app.core.security import SecurityHeadersMiddleware, verify_api_key
 
 from app.routes.predict import router as predict_router
 from app.services.data_service import data_service
@@ -65,6 +66,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Enterprise Security Headers Middleware
+app.add_middleware(SecurityHeadersMiddleware)
+
 app.include_router(predict_router)
 
 
@@ -115,10 +119,10 @@ def read_root():
 
 # ── API routes ────────────────────────────────────────────────────────────────
 @app.get("/leagues")
-def list_leagues():
+def list_leagues(api_key: str = Depends(verify_api_key)):
     return data_service.get_leagues()
 
 
 @app.get("/upcoming/{league_code}")
-def list_upcoming(league_code: str, background_tasks: BackgroundTasks):
+def list_upcoming(league_code: str, background_tasks: BackgroundTasks, api_key: str = Depends(verify_api_key)):
     return data_service.get_predicted_upcoming(league_code, background_tasks)

@@ -1,0 +1,101 @@
+{
+    "PL": {
+        "colsample_bytree": 0.5390688456025535,
+        "learning_rate": 0.039211651325607846,
+        "max_depth": 4,
+        "min_child_weight": 14,
+        "n_estimators": 248,
+        "subsample": 0.7439986631130484,
+        "objective": "count:poisson",
+        "random_state": 42,
+        "verbosity": 0
+    },
+    "PD": {
+        "colsample_bytree": 0.6246844304357644,
+        "learning_rate": 0.03100340105889054,
+        "max_depth": 3,
+        "min_child_weight": 6,
+        "n_estimators": 103,
+        "subsample": 0.5125253169822235,
+        "objective": "count:poisson",
+        "random_state": 42,
+        "verbosity": 0
+    },
+    "BL1": {
+        "colsample_bytree": 0.6554709158757928,
+        "learning_rate": 0.018567451588694796,
+        "max_depth": 2,
+        "min_child_weight": 10,
+        "n_estimators": 203,
+        "subsample": 0.8861021229056552,
+        "objective": "count:poisson",
+        "random_state": 42,
+        "verbosity": 0
+    },
+    "SA": {
+        "colsample_bytree": 0.5003115063364058,
+        "learning_rate": 0.054610577964560876,
+        "max_depth": 2,
+        "min_child_weight": 14,
+        "n_estimators": 107,
+        "subsample": 0.7099025726528951,
+        "objective": "count:poisson",
+        "random_state": 42,
+        "verbosity": 0
+    },
+    "FL1": {
+        "colsample_bytree": 0.736965827544817,
+        "learning_rate": 0.007322520635999886,
+        "max_depth": 4,
+        "min_child_weight": 9,
+        "n_estimators": 70,
+        "subsample": 0.6801997007878172,
+        "objective": "count:poisson",
+        "random_state": 42,
+        "verbosity": 0
+    },
+    "PPL": {
+        "colsample_bytree": 0.6306163075223341,
+        "learning_rate": 0.03352219872026997,
+        "max_depth": 5,
+        "min_child_weight": 11,
+        "n_estimators": 239,
+        "subsample": 0.6301321323053057,
+        "objective": "count:poisson",
+        "random_state": 42,
+        "verbosity": 0
+    },
+    "DED": {
+        "colsample_bytree": 0.7428136990746739,
+        "learning_rate": 0.01879995910112717,
+        "max_depth": 2,
+        "min_child_weight": 3,
+        "n_estimators": 138,
+        "subsample": 0.8947547746402069,
+        "objective": "count:poisson",
+        "random_state": 42,
+        "verbosity": 0
+    },
+    "BSA": {
+        "colsample_bytree": 0.5003115063364058,
+        "learning_rate": 0.054610577964560876,
+        "max_depth": 2,
+        "min_child_weight": 14,
+        "n_estimators": 107,
+        "subsample": 0.7099025726528951,
+        "objective": "count:poisson",
+        "random_state": 42,
+        "verbosity": 0
+    },
+    "ELC": {
+        "colsample_bytree": 0.5390688456025535,
+        "learning_rate": 0.039211651325607846,
+        "max_depth": 4,
+        "min_child_weight": 14,
+        "n_estimators": 248,
+        "subsample": 0.7439986631130484,
+        "objective": "count:poisson",
+        "random_state": 42,
+        "verbosity": 0
+    }
+}

@@ -33,7 +33,8 @@ class HistoryService:
                     m['awayTeam_id'],
                     m['homeTeam_name'],
                     m['awayTeam_name'],
-                    include_rapid_stats=False,   # No need for RapidAPI stats in history eval
+                    match_id=m["match_id"],
+                    utc_date=m["utcDate"]
                 )
                 
                 # Actual Result

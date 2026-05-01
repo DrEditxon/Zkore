@@ -42,6 +42,7 @@ function switchView(view, el) {
 
     // Lazy-load data when switching to views
     if (view === "partidos") renderPartidosView();
+    if (view === "predicciones") renderAllPredictionsView();
     if (view === "historial") renderHistorialView();
     if (view === "valuebets") renderValueBetsView();
     if (view === "estadisticas") renderEstadisticasView();
@@ -100,6 +101,8 @@ function resetDashboard() {
     document.getElementById("highlightsList").innerHTML =
         `<div class="skeleton-highlight"></div><div class="skeleton-highlight"></div><div class="skeleton-highlight"></div>`;
     const mg = document.getElementById("matchGridFull"); if (mg) mg.innerHTML = "";
+    const allPredBody = document.getElementById("allPredictionsBody"); 
+    if (allPredBody) allPredBody.innerHTML = `<tr><td colspan="8" class="table-loading"><div class="table-spinner"></div> Cargando jornada...</td></tr>`;
     document.getElementById("trainingBannerDash").style.display = "none";
     document.getElementById("matchdayTag").textContent = "Jornada —";
     document.getElementById("kpiMatches").textContent = "—";
@@ -140,9 +143,12 @@ async function loadMatchesAndPredictions() {
         renderHighlights(matchesData);
         renderStatCards(matchesData);
 
-        // If partidos view is active, also update it
+        // If partidos/predicciones view is active, also update it
         if (document.getElementById("view-partidos").classList.contains("active")) {
             renderPartidosView();
+        }
+        if (document.getElementById("view-predicciones").classList.contains("active")) {
+            renderAllPredictionsView();
         }
 
     } catch(e) {
@@ -478,6 +484,65 @@ function renderPartidosView() {
 }
 
 // ══════════════════════════════════════════════
+// DATA GRID VIEW (Predicciones)
+// ══════════════════════════════════════════════
+function renderAllPredictionsView() {
+    const tbody = document.getElementById("allPredictionsBody");
+    if (!tbody) return;
+    if (!matchesData.length) {
+        tbody.innerHTML = `<tr><td colspan="8" class="table-loading">No hay partidos disponibles</td></tr>`;
+        return;
+    }
+
+    tbody.innerHTML = matchesData.map(m => {
+        const pred = m.prediction || { local: 33.3, empate: 33.3, visitante: 33.3 };
+        const isTraining = m.training;
+        
+        const dateStr = new Date(m.utcDate).toLocaleString("es-ES", { weekday:"short", day:"numeric", hour:"2-digit", minute:"2-digit" });
+        
+        const maxProb = Math.max(pred.local, pred.empate, pred.visitante);
+        let conf;
+        if (maxProb >= 60) conf = "Alta";
+        else if (maxProb >= 50) conf = "Media";
+        else conf = "Baja";
+        
+        const confClass = conf === "Alta" ? "conf-alta" : conf === "Media" ? "conf-media" : "conf-baja";
+        const xgLocal = pred._xg_local || "—";
+        const xgVisit = pred._xg_visitante || "—";
+        
+        // Colors for 1X2 based on probability
+        const getColor = (p) => p >= 50 ? 'var(--accent)' : p >= 35 ? 'var(--blue)' : 'var(--text-secondary)';
+        
+        const hCrestUrl = m.homeTeam.crest || "";
+        const aCrestUrl = m.awayTeam.crest || "";
+        const hImg = hCrestUrl ? `<img src="${hCrestUrl}" style="width:20px;height:20px;object-fit:contain;vertical-align:middle;margin-right:8px" onerror="this.style.display='none'" alt="">` : "";
+        const aImg = aCrestUrl ? `<img src="${aCrestUrl}" style="width:20px;height:20px;object-fit:contain;vertical-align:middle;margin-right:8px" onerror="this.style.display='none'" alt="">` : "";
+
+        return `<tr onclick="openPredModal(${m.id}, ${m.homeTeam.id}, ${m.awayTeam.id}, '${esc(m.homeTeam.name)}', '${esc(m.awayTeam.name)}', '${esc(m.homeTeam.crest||"")}', '${esc(m.awayTeam.crest||"")}', '${m.utcDate}')">
+            <td style="font-size:0.75rem;color:var(--text-muted);font-family:var(--mono)">${dateStr}</td>
+            <td>
+                <div style="display:flex;flex-direction:column;gap:4px;font-weight:600">
+                    <span style="display:flex;align-items:center">${hImg}${m.homeTeam.name}</span>
+                    <span style="display:flex;align-items:center;color:var(--text-secondary);font-size:0.8rem;font-weight:400">${aImg}${m.awayTeam.name}</span>
+                </div>
+            </td>
+            <td style="font-family:var(--mono);font-weight:700;color:${isTraining?'inherit':getColor(pred.local)}">${isTraining?'-':pred.local.toFixed(1)+'%'}</td>
+            <td style="font-family:var(--mono);font-weight:700;color:${isTraining?'inherit':getColor(pred.empate)}">${isTraining?'-':pred.empate.toFixed(1)+'%'}</td>
+            <td style="font-family:var(--mono);font-weight:700;color:${isTraining?'inherit':getColor(pred.visitante)}">${isTraining?'-':pred.visitante.toFixed(1)+'%'}</td>
+            <td class="xg-cell">
+                <div class="xg-pair">
+                    <span>${isTraining?'-':xgLocal}</span>
+                    <span class="xg-sep">–</span>
+                    <span>${isTraining?'-':xgVisit}</span>
+                </div>
+            </td>
+            <td>${isTraining?'-':`<span class="conf-badge ${confClass}">${conf}</span>`}</td>
+            <td><button class="detail-btn" onclick="event.stopPropagation();openPredModal(${m.id}, ${m.homeTeam.id}, ${m.awayTeam.id}, '${esc(m.homeTeam.name)}', '${esc(m.awayTeam.name)}', '${esc(m.homeTeam.crest||"")}', '${esc(m.awayTeam.crest||"")}', '${m.utcDate}')">Ver →</button></td>
+        </tr>`;
+    }).join("");
+}
+
+// ══════════════════════════════════════════════
 // HISTORIAL VIEW
 // ══════════════════════════════════════════════
 function renderHistorialView() {
@@ -556,16 +621,21 @@ async function renderValueBetsView() {
                 📊 Baseline de Liga · ${base.total_matches?.toLocaleString() || "—"} partidos históricos · Margen simulado ${base.overround || "7%"} · Edge mínimo ${base.min_edge || "7%"}
             </div>
             <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px">
-                ${[
-                    { label:"🏠 Local gana", rate: base.home_win_rate, odds: base.odds_home },
-                    { label:"🤝 Empate",     rate: base.draw_rate,     odds: base.odds_draw },
-                    { label:"✈️ Visitante",  rate: base.away_win_rate, odds: base.odds_away },
-                ].map(b => `
                 <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:12px;text-align:center">
-                    <div style="font-size:.78rem;color:var(--text-muted);margin-bottom:4px">${b.label}</div>
-                    <div style="font-size:1.25rem;font-weight:700;color:var(--text-primary)">${b.rate ?? "—"}%</div>
-                    <div style="font-size:.75rem;color:var(--accent);margin-top:2px">Cuota: ${b.odds ?? "—"}</div>
-                </div>`).join("")}
+                    <div style="font-size:.78rem;color:var(--text-muted);margin-bottom:4px">🤖 Inteligencia</div>
+                    <div style="font-size:1.1rem;font-weight:700;color:var(--text-primary)">XGBoost + ELO</div>
+                    <div style="font-size:.7rem;color:var(--blue);margin-top:2px">Contexto Avanzado</div>
+                </div>
+                <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:12px;text-align:center">
+                    <div style="font-size:.78rem;color:var(--text-muted);margin-bottom:4px">🏦 Bookie Simulado</div>
+                    <div style="font-size:1.1rem;font-weight:700;color:var(--text-primary)">Poisson Dinámico</div>
+                    <div style="font-size:.7rem;color:var(--text-secondary);margin-top:2px">Con Margen ${base.overround || "7%"}</div>
+                </div>
+                <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:12px;text-align:center">
+                    <div style="font-size:.78rem;color:var(--text-muted);margin-bottom:4px">⚡ Edge Mínimo</div>
+                    <div style="font-size:1.1rem;font-weight:700;color:var(--text-primary)">+${base.min_edge || "5%"} EV</div>
+                    <div style="font-size:.7rem;color:var(--accent);margin-top:2px">Ventaja Requerida</div>
+                </div>
             </div>
         </div>`;
 
@@ -604,8 +674,9 @@ async function renderValueBetsView() {
                             <span style="font-size:.78rem;color:var(--text-muted);margin-left:8px">${b.team_label}</span>
                         </div>
                         <div style="display:flex;gap:8px">
-                            <span style="background:${edgeColor}22;color:${edgeColor};border-radius:99px;padding:3px 10px;font-size:.75rem;font-weight:700">Edge +${b.edge}%</span>
-                            <span style="background:${evColor}22;color:${evColor};border-radius:99px;padding:3px 10px;font-size:.75rem;font-weight:700">EV +${b.expected_value}%</span>
+                            <span title="Diferencia directa de probabilidades (Modelo - Mercado)" style="cursor:help;background:${edgeColor}22;color:${edgeColor};border-radius:99px;padding:3px 10px;font-size:.75rem;font-weight:700">Edge +${b.edge}%</span>
+                            <span title="Expected Value: (Prob. Modelo × Cuota) - 1. Mide tu retorno a largo plazo." style="cursor:help;background:${evColor}22;color:${evColor};border-radius:99px;padding:3px 10px;font-size:.75rem;font-weight:700">EV +${b.expected_value}%</span>
+                            <span title="Kelly Fraccional (1/4): % recomendado de tu Bankroll total para esta apuesta." style="cursor:help;background:var(--accent-dim);color:var(--accent);border-radius:99px;padding:3px 10px;font-size:.75rem;font-weight:700">💰 Stake ${b.kelly_stake}%</span>
                         </div>
                     </div>
                     <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;font-size:.78rem">

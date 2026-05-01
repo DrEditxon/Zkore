@@ -17,10 +17,6 @@ os.makedirs(CACHE_DIR, exist_ok=True)
 class DataService:
     def __init__(self):
         self.headers_football_data = {"X-Auth-Token": settings.FOOTBALL_DATA_API_KEY}
-        self.headers_rapidapi = {
-            "x-rapidapi-key": settings.RAPIDAPI_KEY,
-            "x-rapidapi-host": settings.RAPIDAPI_HOST,
-        }
 
         self.session = requests.Session()
         retries = Retry(total=3, backoff_factor=0.5, status_forcelist=[500, 502, 503, 504, 429])
@@ -108,10 +104,6 @@ class DataService:
         """
         Fetches upcoming matches and computes predictions in parallel.
 
-        PERF FIX E: Predictions for the grid skip RapidAPI (include_rapid_stats=False).
-        Stats are only fetched when the user opens the detail modal.
-        This removes up to 4 external HTTP calls per match from the critical path.
-
         BUG FIX #1: Catches HTTPException(202) so the page never gets stuck loading.
         """
         cache_key = f"predicted_upcoming_{league_code}"
@@ -152,13 +144,11 @@ class DataService:
 
         def fetch_prediction(m):
             try:
-                # PERF FIX E: skip RapidAPI for the grid
                 res   = predict_match(
                     league_code,
                     m["homeTeam"]["id"], m["awayTeam"]["id"],
                     m["homeTeam"]["name"], m["awayTeam"]["name"],
                     background_tasks=background_tasks,
-                    include_rapid_stats=False,
                     match_id=m["id"],
                     utc_date=m["utcDate"],
                 )
@@ -261,115 +251,19 @@ class DataService:
         self._matches_mem_cache[league_code] = matches
         return matches
 
-    # ─── RapidAPI stats (modal only) ─────────────────────────────────────────
+    # ─── Modal Stats ─────────────────────────────────────────
 
     def get_expected_match_stats(self, home_name: str, away_name: str, league_code: str):
         """
-        PERF FIX E: Called only from the detail modal, not from the grid pipeline.
-        Dynamic season + circuit-breaker for rate limits.
+        RapidAPI integration has been removed for simplicity and stability.
+        Returns static historical baseline stats to maintain frontend compatibility.
         """
-        rapid_league_id = {
-            "PL": 39, "PD": 140, "BL1": 78, "SA": 135, "FL1": 61,
-            "DED": 88, "PPL": 94, "BSA": 71, "ELC": 40, "CL": 2, "CLI": 13,
-        }.get(league_code, 39)
-
-        from datetime import datetime
-        now = datetime.now()
-        season = now.year if now.month >= 8 else now.year - 1
-
-        if self._get_from_cache("rapidapi_suspended", ttl=300):
-            return self._get_fallback_stats("⚠️ API Suspendida temporalmente (Rate Limit)")
-
-        def get_team_id(name):
-            ck = f"rapid_team_id_{hashlib.md5(name.encode()).hexdigest()}"
-            hit = self._get_from_cache(ck, ttl=86400 * 30)
-            if hit:
-                return hit
-            try:
-                res = self.session.get(
-                    f"https://{settings.RAPIDAPI_HOST}/v3/teams",
-                    headers=self.headers_rapidapi, params={"search": name}, timeout=3
-                )
-                if res.status_code == 429:
-                    self._set_to_cache("rapidapi_suspended", True)
-                    return None
-                res.raise_for_status()
-                d = res.json()
-                if d.get("response"):
-                    tid = d["response"][0]["team"]["id"]
-                    self._set_to_cache(ck, tid)
-                    return tid
-            except Exception as e:
-                logger.warning(f"RapidAPI team lookup error for {name}: {e}")
-            return None
-
-        def get_team_averages(team_id):
-            if not team_id:
-                return None
-            ck = f"rapid_stats_{team_id}_{rapid_league_id}_{season}"
-            hit = self._get_from_cache(ck, ttl=86400)
-            if hit:
-                return hit
-            try:
-                res = self.session.get(
-                    f"https://{settings.RAPIDAPI_HOST}/v3/teams/statistics",
-                    headers=self.headers_rapidapi,
-                    params={"league": rapid_league_id, "season": season, "team": team_id},
-                    timeout=3,
-                )
-                if res.status_code == 429:
-                    self._set_to_cache("rapidapi_suspended", True)
-                    return None
-                res.raise_for_status()
-                d = res.json()
-                if d.get("response"):
-                    stats  = d["response"]
-                    played = stats.get("fixtures", {}).get("played", {}).get("total", 0)
-                    if played > 0:
-                        yc = stats.get("cards", {}).get("yellow", {})
-                        total_y = yc.get("total") or 0
-                        if not total_y and isinstance(yc, dict):
-                            total_y = sum(
-                                v.get("total", 0)
-                                for k, v in yc.items()
-                                if k != "total" and isinstance(v, dict)
-                            )
-                        result = {"avg_yellow": round(total_y / played, 2), "played": played}
-                        self._set_to_cache(ck, result)
-                        return result
-            except Exception as e:
-                logger.warning(f"RapidAPI stats error for team {team_id}: {e}")
-            return None
-
-        import concurrent.futures
-        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:
-            h_id = ex.submit(get_team_id, home_name).result()
-            a_id = ex.submit(get_team_id, away_name).result()
-            h_stats = ex.submit(get_team_averages, h_id).result()
-            a_stats = ex.submit(get_team_averages, a_id).result()
-
-        if h_stats and a_stats:
-            return {
-                "estadisticas_esperadas": {
-                    "tarjetas_amarillas": {
-                        "local": h_stats["avg_yellow"],
-                        "visitante": a_stats["avg_yellow"],
-                    },
-                    "tiros_arco": {"local": 4.8, "visitante": 3.9},
-                },
-                "rapidapi_rate_limit": self._get_from_cache("rapidapi_limit_count", ttl=60) or "OK",
-            }
-
-        return self._get_fallback_stats("⚠️ Usando promedios históricos")
-
-    def _get_fallback_stats(self, nota: str):
         return {
             "estadisticas_esperadas": {
                 "tarjetas_amarillas": {"local": 2.2, "visitante": 1.9},
                 "tiros_arco":        {"local": 4.5, "visitante": 3.5},
             },
-            "nota": nota,
-            "rapidapi_rate_limit": "Limitado",
+            "nota": "Estadísticas predictivas basales activadas.",
         }
 
     # ─── Cache invalidation ───────────────────────────────────────────────────

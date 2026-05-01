@@ -10,12 +10,6 @@ class Settings:
     if not FOOTBALL_DATA_API_KEY:
         raise ValueError("FOOTBALL_DATA_API_KEY is required but not set in the environment.")
 
-    RAPIDAPI_KEY = os.getenv("RAPIDAPI_KEY", "")
-    if not RAPIDAPI_KEY:
-        print("[WARNING] RAPIDAPI_KEY is not set. Detailed stats in modals will use fallbacks.")
-
-    RAPIDAPI_HOST = os.getenv("RAPIDAPI_HOST", "api-football-v1.p.rapidapi.com")
-
     # Cache duration in seconds
     CACHE_DURATION = int(os.getenv("CACHE_DURATION", "3600"))
     CACHE_DURATION_HISTORICAL = int(os.getenv("CACHE_DURATION_HISTORICAL", "86400"))
@@ -23,6 +17,10 @@ class Settings:
     # FIX #4: CORS default now uses "*" so the app works on any deployment
     # without requiring ALLOWED_ORIGINS to be manually configured.
     ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "*").split(",")
+
+    # Security Configuration
+    ENFORCE_API_KEY = os.getenv("ENFORCE_API_KEY", "False").lower() in ("true", "1", "yes")
+    ZKORE_API_KEY = os.getenv("ZKORE_API_KEY", "zkore-secret-dev-key")
 
     # Model configuration
     MIN_MATCHES_REQUIRED = int(os.getenv("MIN_MATCHES_REQUIRED", "30"))

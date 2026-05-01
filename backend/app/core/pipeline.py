@@ -28,16 +28,12 @@ def predict_match(
     away_id: int,
     home_name: str,
     away_name: str,
-    background_tasks=None,
-    include_rapid_stats: bool = True,
+    background_tasks: BackgroundTasks = None,
     match_id: int = None,
     utc_date: str = None,
 ) -> dict:
     """
     Full prediction pipeline: Data → Features → XGBoost → Poisson → Calibrator.
-
-    `include_rapid_stats=False` skips RapidAPI calls for the upcoming grid.
-    The modal uses True and fetches stats on demand.
     """
     logger.info(f"[{league_code}] Predicting {home_id} vs {away_id}")
 
@@ -46,7 +42,8 @@ def predict_match(
     )
     n_rows = payload.get("n_rows", 0)
 
-    prob_matrix = poisson_service.calculate_probability_matrix(lambda_h, lambda_a, rho=0.0)
+    # FASE 1: Ajuste Dixon-Coles (rho=-0.15) para corregir los empates
+    prob_matrix = poisson_service.calculate_probability_matrix(lambda_h, lambda_a, rho=-0.15)
     markets     = poisson_service.extract_metrics(prob_matrix)
     top_scores  = poisson_service.get_top_scorelines(prob_matrix)
     goal_dists  = poisson_service.format_goal_distributions(lambda_h, lambda_a)
@@ -54,17 +51,6 @@ def predict_match(
     p_awy = markets["prob_away_win"]
     p_drw = markets["prob_draw"]
     p_hom = markets["prob_home_win"]
-
-    calibrator = payload.get("calibrator")
-    if calibrator:
-        raw_probs = [[p_awy / 100, p_drw / 100, p_hom / 100]]
-        calib = calibrator.predict_proba(raw_probs)[0]
-        p_awy = round(calib[0] * 100, 2)
-        p_drw = round(calib[1] * 100, 2)
-        p_hom = round(calib[2] * 100, 2)
-        markets["prob_away_win"] = p_awy
-        markets["prob_draw"]     = p_drw
-        markets["prob_home_win"] = p_hom
 
     explicacion = generate_heuristic_explanation(
         lambda_h, lambda_a, home_name, away_name, p_hom / 100, p_awy / 100
@@ -97,7 +83,7 @@ def predict_match(
         "modelo_info": {
             "partidos_entrenados": n_rows,
             "confianza":  conf,
-            "tipo":       "XGBoost Regressor + Poisson" + (" + Platt Calibrator" if calibrator else ""),
+            "tipo":       "XGBoost Poisson + Dixon-Coles",
             "explicacion": explicacion,
             "mae_home":   round(mae_home, 3) if mae_home != 999 else None,
             "mae_away":   round(mae_away, 3) if mae_away != 999 else None,
@@ -106,11 +92,9 @@ def predict_match(
         },
     }
 
-    # PERF FIX E: Only hit RapidAPI when the user explicitly opens the match modal.
-    # Skip it entirely for the bulk upcoming-grid load.
-    if include_rapid_stats:
-        rapid_data = data_service.get_expected_match_stats(home_name, away_name, league_code)
-        result.update(rapid_data)
+    # Fetch stats
+    rapid_data = data_service.get_expected_match_stats(home_name, away_name, league_code)
+    result.update(rapid_data)
 
     # ─── Supabase Persistence ────────────────────────────────────────────────
     if background_tasks and match_id:

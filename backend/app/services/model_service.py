@@ -12,6 +12,7 @@ from datetime import datetime
 from app.core.config import settings
 from app.services.data_service import data_service
 from app.services.feature_service import feature_service, FEATURE_COLS
+from app.services.tuning_service import tuning_service
 
 logger = logging.getLogger(__name__)
 
@@ -161,33 +162,34 @@ class ModelService:
             y_home = df_train["target_home_goals"]
             y_away = df_train["target_away_goals"]
 
-            X_train, X_val, y_h_train, y_h_val, y_a_train, y_a_val = train_test_split(
-                X, y_home, y_away, test_size=0.15, random_state=42
+            # PHASE 1: Ponderación temporal (Sample Weights)
+            # Los partidos más recientes tienen mayor peso (decaimiento exponencial)
+            decay_factor = 2.0
+            weights = np.exp(np.linspace(-decay_factor, 0, len(X)))
+
+            X_train, X_val, y_h_train, y_h_val, y_a_train, y_a_val, w_train, w_val = train_test_split(
+                X, y_home, y_away, weights, test_size=0.15, random_state=42
             )
 
-            model_params = {
-                "n_estimators": 182,
-                "max_depth": 3,
-                "learning_rate": 0.011,
-                "subsample": 0.728,
-                "colsample_bytree": 0.835,
-                "min_child_weight": 7,
-                "random_state": 42,
-                "verbosity": 0,
-            }
+            # FASE 3: Obtener mejores hiperparámetros (si no existen, los calcula vía AutoML)
+            model_params = tuning_service.get_best_params(league_code)
+            
+            # Si detecta los parámetros default, fuerza el tuning una sola vez
+            if model_params.get("n_estimators") == 182:
+                model_params = tuning_service.tune_league(league_code, X_train, y_h_train)
 
             try:
                 from xgboost.callback import EarlyStopping
                 es = EarlyStopping(rounds=20, save_best=True)
                 xg_home = XGBRegressor(**model_params, callbacks=[es])
-                xg_home.fit(X_train, y_h_train, eval_set=[(X_val, y_h_val)], verbose=False)
+                xg_home.fit(X_train, y_h_train, eval_set=[(X_val, y_h_val)], sample_weight=w_train, verbose=False)
                 xg_away = XGBRegressor(**model_params, callbacks=[es])
-                xg_away.fit(X_train, y_a_train, eval_set=[(X_val, y_a_val)], verbose=False)
+                xg_away.fit(X_train, y_a_train, eval_set=[(X_val, y_a_val)], sample_weight=w_train, verbose=False)
             except Exception:
                 xg_home = XGBRegressor(**model_params)
-                xg_home.fit(X_train, y_h_train, eval_set=[(X_val, y_h_val)], verbose=False)
+                xg_home.fit(X_train, y_h_train, eval_set=[(X_val, y_h_val)], sample_weight=w_train, verbose=False)
                 xg_away = XGBRegressor(**model_params)
-                xg_away.fit(X_train, y_a_train, eval_set=[(X_val, y_a_val)], verbose=False)
+                xg_away.fit(X_train, y_a_train, eval_set=[(X_val, y_a_val)], sample_weight=w_train, verbose=False)
 
             mae_h  = mean_absolute_error(y_h_val, xg_home.predict(X_val))
             rmse_h = float(np.sqrt(mean_squared_error(y_h_val, xg_home.predict(X_val))))
@@ -210,28 +212,8 @@ class ModelService:
                 ),
             }
 
-            # Probability calibrator (Platt Scaling)
-            try:
-                from app.services.poisson_service import poisson_service
-                from sklearn.linear_model import LogisticRegression
-
-                p_h_tr = np.maximum(0.01, xg_home.predict(X_train))
-                p_a_tr = np.maximum(0.01, xg_away.predict(X_train))
-
-                calib_X, calib_Y = [], []
-                for h, a in zip(p_h_tr, p_a_tr):
-                    mat = poisson_service.calculate_probability_matrix(h, a)
-                    met = poisson_service.extract_metrics(mat)
-                    calib_X.append([met["prob_away_win"] / 100, met["prob_draw"] / 100, met["prob_home_win"] / 100])
-                for h, a in zip(y_h_train, y_a_train):
-                    calib_Y.append(2 if h > a else (1 if h == a else 0))
-
-                calibrator = LogisticRegression(max_iter=2000)
-                calibrator.fit(calib_X, calib_Y)
-                payload["calibrator"] = calibrator
-                logger.info(f"[{league_code}] Probability calibrator trained.")
-            except Exception as e:
-                logger.warning(f"[{league_code}] Calibrator training failed: {e}")
+            # FASE 1: Se ha eliminado el "Probability calibrator (Platt Scaling)".
+            # El uso de 'count:poisson' y Dixon-Coles genera probabilidades nativas precisas.
 
             # Save new model to local disk
             new_path = self._model_path(league_code, timestamp=True)
