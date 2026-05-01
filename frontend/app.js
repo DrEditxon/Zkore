@@ -8,6 +8,7 @@ let historyData       = null;
 let currentLeague     = null;
 let currentController = null;
 let trainingTimer     = null;
+let livePollTimer     = null;
 
 // ── Boot ──────────────────────────────────────
 document.addEventListener("DOMContentLoaded", () => {
@@ -79,6 +80,7 @@ async function loadLeagues() {
 
 async function onLeagueChange() {
     if (trainingTimer) { clearTimeout(trainingTimer); trainingTimer = null; }
+    if (livePollTimer) { clearTimeout(livePollTimer); livePollTimer = null; }
     currentLeague = document.getElementById("leagueSelect").value;
     if (!currentLeague) return;
 
@@ -151,6 +153,29 @@ async function loadMatchesAndPredictions() {
             renderAllPredictionsView();
         }
 
+        // Poll for live scores if any match is live
+        if (livePollTimer) clearTimeout(livePollTimer);
+        if (matchesData.some(m => m.is_live)) {
+            livePollTimer = setTimeout(() => {
+                if (document.getElementById("leagueSelect").value === currentLeague) {
+                    // Update silently without showing the loading spinner overlay
+                    fetch(`/upcoming/${currentLeague}`)
+                        .then(r => r.json())
+                        .then(d => {
+                            if (d.matches) {
+                                matchesData = d.matches;
+                                renderPredictionsTable(matchesData);
+                                renderHighlights(matchesData);
+                                if (document.getElementById("view-partidos").classList.contains("active")) renderPartidosView();
+                                if (document.getElementById("view-predicciones").classList.contains("active")) renderAllPredictionsView();
+                            }
+                        })
+                        .catch(e => console.warn("Background poll failed", e))
+                        .finally(() => scheduleLiveRetry());
+                }
+            }, 60000);
+        }
+
     } catch(e) {
         if (e.name === "AbortError") return;
         document.getElementById("predictionsBody").innerHTML =
@@ -176,6 +201,29 @@ function scheduleRetry() {
             loadMatchesAndPredictions();
         }
     }, 30000);
+}
+
+function scheduleLiveRetry() {
+    // This is called by the background poller to keep it looping
+    if (livePollTimer) clearTimeout(livePollTimer);
+    if (matchesData.some(m => m.is_live)) {
+        livePollTimer = setTimeout(() => {
+            if (document.getElementById("leagueSelect").value === currentLeague) {
+                fetch(`/upcoming/${currentLeague}`)
+                    .then(r => r.json())
+                    .then(d => {
+                        if (d.matches) {
+                            matchesData = d.matches;
+                            renderPredictionsTable(matchesData);
+                            renderHighlights(matchesData);
+                            if (document.getElementById("view-partidos").classList.contains("active")) renderPartidosView();
+                            if (document.getElementById("view-predicciones").classList.contains("active")) renderAllPredictionsView();
+                        }
+                    })
+                    .finally(() => scheduleLiveRetry());
+            }
+        }, 60000);
+    }
 }
 
 function showStatus(type) {

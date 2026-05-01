@@ -107,9 +107,15 @@ class DataService:
         BUG FIX #1: Catches HTTPException(202) so the page never gets stuck loading.
         """
         cache_key = f"predicted_upcoming_{league_code}"
-        cached = self._get_from_cache(cache_key, ttl=900)
-        if cached:
-            return cached
+        
+        # Bypass cache entirely if there are live matches so scores update in real-time
+        from app.services.market_service import market_service
+        has_live = bool(market_service.get_live_matches(league_code))
+        
+        if not has_live:
+            cached = self._get_from_cache(cache_key, ttl=900)
+            if cached:
+                return cached
 
         data = self.get_upcoming_matches(league_code)
         if not data["matches"]:
@@ -204,8 +210,9 @@ class DataService:
         except Exception as e:
             logger.error(f"Failed to enrich live matches: {e}")
 
+        any_live = any(m.get("is_live") for m in data["matches"])
         any_training = any(m.get("training") for m in data["matches"])
-        if not any_training:
+        if not any_training and not any_live:
             self._set_to_cache(cache_key, data)
 
         return data
