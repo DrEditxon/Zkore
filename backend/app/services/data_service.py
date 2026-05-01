@@ -69,7 +69,7 @@ class DataService:
         try:
             response = self.session.get(
                 url, headers=self.headers_football_data,
-                params={"status": "SCHEDULED"}, timeout=10
+                params={"status": "SCHEDULED,LIVE,IN_PLAY,PAUSED"}, timeout=10
             )
             response.raise_for_status()
         except requests.exceptions.RequestException as e:
