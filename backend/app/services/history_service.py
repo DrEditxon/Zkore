@@ -33,7 +33,6 @@ class HistoryService:
                     m['awayTeam_id'],
                     m['homeTeam_name'],
                     m['awayTeam_name'],
-                    match_id=m["match_id"],
                     utc_date=m["utcDate"]
                 )
                 
@@ -88,24 +87,37 @@ class HistoryService:
                     }
                 }
             except Exception as e:
+                from fastapi import HTTPException
+                if isinstance(e, HTTPException):
+                    raise e
                 logger.error(f"Error processing history for match: {e}")
                 return None
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
-            results = list(executor.map(process_match, recent_matches))
+        from fastapi import HTTPException
+        try:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+                results = list(executor.map(process_match, recent_matches))
+                
+            history_results = [r for r in results if r is not None]
+            hits = sum(1 for r in history_results if r['is_hit'])
+            misses = len(history_results) - hits
             
-        history_results = [r for r in results if r is not None]
-        hits = sum(1 for r in history_results if r['is_hit'])
-        misses = len(history_results) - hits
-        
-        return {
-            "summary": {
-                "hits": hits,
-                "misses": misses,
-                "total": len(history_results),
-                "accuracy": round((hits / len(history_results)) * 100, 1) if history_results else 0
-            },
-            "history": history_results
-        }
+            return {
+                "summary": {
+                    "hits": hits,
+                    "misses": misses,
+                    "total": len(history_results),
+                    "accuracy": round((hits / len(history_results)) * 100, 1) if history_results else 0
+                },
+                "history": history_results
+            }
+        except HTTPException as e:
+            if e.status_code == 202:
+                return {
+                    "training_in_progress": True,
+                    "summary": {"hits": 0, "misses": 0, "total": 0, "accuracy": 0},
+                    "history": []
+                }
+            raise e
 
 history_service = HistoryService()

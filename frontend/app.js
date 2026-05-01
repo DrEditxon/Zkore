@@ -376,6 +376,11 @@ async function loadHistory() {
         const r = await fetch(`/history/${currentLeague}`);
         if (!r.ok) return;
         historyData = await r.json();
+        
+        if (historyData.training_in_progress) {
+            scheduleRetry();
+        }
+        
         renderDonut(historyData.summary);
         renderHistoryBars(historyData.history || []);
         renderHistoryKpis(historyData.summary);
@@ -550,6 +555,14 @@ function renderHistorialView() {
     if (!historyData) {
         el.innerHTML = `<div style="color:var(--text-muted);text-align:center;padding:40px">Cargando historial...</div>`;
         if (currentLeague) loadHistory().then(() => { if (historyData) renderHistorialView(); });
+        return;
+    }
+
+    if (historyData.training_in_progress) {
+        el.innerHTML = `<div style="text-align:center;padding:60px 20px;color:var(--blue)">
+            <div class="training-dot-anim" style="margin:0 auto 16px;width:28px;height:28px"></div>
+            <p style="font-weight:600">Calculando historial con el modelo en entrenamiento...</p>
+        </div>`;
         return;
     }
 
@@ -746,6 +759,14 @@ function renderEstadisticasView() {
     const el = document.getElementById("statsContent");
     if (!historyData) {
         el.innerHTML = `<div style="color:var(--text-muted);text-align:center;padding:40px">Cargando estadísticas...</div>`;
+        return;
+    }
+    
+    if (historyData.training_in_progress) {
+        el.innerHTML = `<div style="text-align:center;padding:60px 20px;color:var(--blue)">
+            <div class="training-dot-anim" style="margin:0 auto 16px;width:28px;height:28px"></div>
+            <p style="font-weight:600">Analizando estadísticas del modelo...</p>
+        </div>`;
         return;
     }
     const s = historyData.summary;

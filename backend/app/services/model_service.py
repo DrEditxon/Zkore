@@ -275,7 +275,8 @@ class ModelService:
             if background_tasks:
                 background_tasks.add_task(train_task)
             else:
-                train_task()
+                import threading
+                threading.Thread(target=train_task, daemon=True).start()
 
         if payload is None:
             if len(matches) < 10:
@@ -330,7 +331,8 @@ class ModelService:
             if background_tasks is not None:
                 background_tasks.add_task(train_task)
             else:
-                train_task()
+                import threading
+                threading.Thread(target=train_task, daemon=True).start()
 
         if payload is None:
             if len(matches) < 10:

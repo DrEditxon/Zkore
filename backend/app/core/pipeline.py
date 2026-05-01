@@ -4,6 +4,7 @@ from app.services.model_service import model_service
 from app.services.poisson_service import poisson_service
 from app.services.feature_service import feature_service
 from app.services.supabase_service import supabase_service
+from fastapi import BackgroundTasks
 
 logger = logging.getLogger(__name__)
 
