@@ -121,6 +121,71 @@ class ModelService:
             except Exception as e:
                 logger.warning(f"[{league_code}] Could not delete {old_file}: {e}")
 
+    # ── Cross-process training guard + background trigger ──────────────────────
+
+    def _is_training_locked(self, league_code: str) -> bool:
+        """
+        BUG-03 FIX: Cross-process-safe training guard.
+
+        The in-memory dict `_training_in_progress` only works within a single
+        Gunicorn worker.  With N workers each process has its own dict, so a
+        concurrent training attempt in another worker is invisible here.
+
+        This method probes the filelock with timeout=0 (non-blocking):
+          - Lock acquired instantly  →  nobody is training  →  return False
+          - Timeout (lock held)      →  some worker is training  →  return True
+
+        Falls back to the in-memory dict when filelock is not available.
+        """
+        if not _FILELOCK_AVAILABLE:
+            return self._training_in_progress.get(league_code, False)
+
+        lock_path = os.path.join(MODELS_DIR, f"{league_code}.lock")
+        try:
+            probe = filelock.FileLock(lock_path, timeout=0)
+            probe.acquire()
+            probe.release()
+            return False   # Successfully acquired → no training in progress
+        except filelock.Timeout:
+            return True    # Lock is held by some worker → training in progress
+
+    def _trigger_background_training(
+        self,
+        league_code: str,
+        matches_data: list,
+        background_tasks=None,
+    ) -> None:
+        """
+        BUG-03 FIX (cont.): Single authoritative method to schedule background
+        training, replacing the two duplicated inner trigger_training() closures
+        that previously existed in ensure_model_ready() and predict_xg().
+
+        Uses _is_training_locked() for cross-process safety before setting the
+        in-memory flag and spinning up the worker thread / FastAPI background task.
+        """
+        if self._is_training_locked(league_code):
+            logger.info(
+                f"[{league_code}] Training already locked (cross-process check). Skipping."
+            )
+            return
+
+        # Set in-memory flag for THIS worker to short-circuit duplicate calls
+        self._training_in_progress[league_code] = True
+
+        def train_task():
+            try:
+                self._train_and_save(league_code, matches_data)
+            except Exception as e:
+                logger.error(f"[{league_code}] Background training error: {e}")
+            finally:
+                self._training_in_progress[league_code] = False
+
+        if background_tasks is not None:
+            background_tasks.add_task(train_task)
+        else:
+            import threading
+            threading.Thread(target=train_task, daemon=True).start()
+
     # ── Train ─────────────────────────────────────────────────────────────────
 
     def _train_and_save(self, league_code: str, matches: list):
@@ -199,6 +264,15 @@ class ModelService:
             logger.info(f"[{league_code}] Home xG → MAE: {mae_h:.3f}  RMSE: {rmse_h:.3f}")
             logger.info(f"[{league_code}] Away xG → MAE: {mae_a:.3f}  RMSE: {rmse_a:.3f}")
 
+            # BUG-01 FIX: Save rich holdout metadata so history_service can
+            # evaluate accuracy on matches the model NEVER trained on.
+            _META_COLS = [
+                "_match_home_id", "_match_away_id",
+                "_match_home_name", "_match_away_name", "_match_date",
+                "target_home_goals", "target_away_goals",
+            ]
+            available_meta = [c for c in _META_COLS if c in df_holdout.columns]
+
             payload = {
                 "xg_home":   xg_home,
                 "xg_away":   xg_away,
@@ -207,8 +281,8 @@ class ModelService:
                 "mae_away":  mae_a,
                 "trained_at": datetime.now().isoformat(),
                 "holdout_matches": (
-                    df_holdout[["target_home_goals", "target_away_goals"]].to_dict(orient="records")
-                    if len(df_holdout) > 0 else []
+                    df_holdout[available_meta].to_dict(orient="records")
+                    if len(df_holdout) > 0 and available_meta else []
                 ),
             }
 
@@ -254,42 +328,26 @@ class ModelService:
         - No model → start training in background, return 202.
         - Model is stale → retrain in background, serve stale predictions silently.
         - Model is fresh → do nothing.
+
+        BUG-03 FIX: Uses _is_training_locked() (cross-process) + the shared
+        _trigger_background_training() method instead of the old per-method
+        inner function with an in-memory-only guard.
         """
         matches = data_service.get_historical_matches(league_code)
         payload = self._load_model(league_code)
-
-        def trigger_training(matches_data):
-            if self._training_in_progress.get(league_code):
-                return
-            self._training_in_progress[league_code] = True
-
-            def train_task():
-                try:
-                    # BUG B+C handled inside _train_and_save
-                    self._train_and_save(league_code, matches_data)
-                except Exception as e:
-                    logger.error(f"[{league_code}] Background training error: {e}")
-                finally:
-                    self._training_in_progress[league_code] = False
-
-            if background_tasks:
-                background_tasks.add_task(train_task)
-            else:
-                import threading
-                threading.Thread(target=train_task, daemon=True).start()
 
         if payload is None:
             if len(matches) < 10:
                 return   # Not enough data yet — fail silently
 
-            if self._training_in_progress.get(league_code):
+            if self._is_training_locked(league_code):
                 from fastapi import HTTPException
                 raise HTTPException(
                     status_code=202,
                     detail={"status": "training", "message": "Entrenamiento en curso..."}
                 )
 
-            trigger_training(matches)
+            self._trigger_background_training(league_code, matches, background_tasks)
             if background_tasks:
                 from fastapi import HTTPException
                 raise HTTPException(
@@ -300,7 +358,7 @@ class ModelService:
         elif payload.get("is_stale"):
             age = payload.get("model_age_days", "?")
             logger.info(f"[{league_code}] Model is {age} days old — scheduling background retraining.")
-            trigger_training(matches)
+            self._trigger_background_training(league_code, matches, background_tasks)
             # Do NOT raise 202 here — continue serving stale predictions transparently
 
     # ── predict_xg ────────────────────────────────────────────────────────────
@@ -312,27 +370,12 @@ class ModelService:
         away_team_id: int,
         background_tasks=None,
     ) -> tuple:
+        """
+        BUG-03 FIX: Uses _is_training_locked() + _trigger_background_training()
+        instead of the old duplicated inner trigger_training() closure.
+        """
         matches = data_service.get_historical_matches(league_code)
         payload = self._load_model(league_code)
-
-        def trigger_training(matches_data):
-            if self._training_in_progress.get(league_code):
-                return
-            self._training_in_progress[league_code] = True
-
-            def train_task():
-                try:
-                    self._train_and_save(league_code, matches_data)
-                except Exception as e:
-                    logger.error(f"[{league_code}] Background training error: {e}")
-                finally:
-                    self._training_in_progress[league_code] = False
-
-            if background_tasks is not None:
-                background_tasks.add_task(train_task)
-            else:
-                import threading
-                threading.Thread(target=train_task, daemon=True).start()
 
         if payload is None:
             if len(matches) < 10:
@@ -340,14 +383,14 @@ class ModelService:
                     f"No hay suficientes partidos finalizados para {league_code}."
                 )
 
-            if self._training_in_progress.get(league_code):
+            if self._is_training_locked(league_code):
                 from fastapi import HTTPException
                 raise HTTPException(
                     status_code=202,
                     detail={"status": "training", "message": f"Modelo para {league_code} entrenándose."}
                 )
 
-            trigger_training(matches)
+            self._trigger_background_training(league_code, matches, background_tasks)
 
             if background_tasks is not None:
                 from fastapi import HTTPException
@@ -359,8 +402,11 @@ class ModelService:
                 payload = self._load_model(league_code)
 
         elif payload.get("is_stale", False):
-            logger.info(f"[{league_code}] Stale model ({payload.get('model_age_days')} days) — retraining in background.")
-            trigger_training(matches)
+            logger.info(
+                f"[{league_code}] Stale model ({payload.get('model_age_days')} days) "
+                "— retraining in background."
+            )
+            self._trigger_background_training(league_code, matches, background_tasks)
             # Continue prediction with the stale model — no user-facing 202
 
         if payload is None:

@@ -39,9 +39,17 @@ class FeatureService:
         self._states_cache: dict = {}   # { hash -> (team_states, h2h_states) }
 
     def _hash_matches(self, matches: list) -> str:
-        """Fast fingerprint of the match list to detect data changes."""
-        key = f"{len(matches)}_{matches[-1]['utcDate'] if matches else ''}"
-        return key
+        """Robust fingerprint of the match list.
+
+        BUG-02 FIX: The previous key (len + last date) caused cache collisions
+        when two leagues happened to have the same count + last date.  Using an
+        MD5 over a representative sample is effectively collision-free and still
+        O(1) in terms of work relative to list size.
+        """
+        import hashlib, json
+        sample = matches[:3] + matches[-3:] if len(matches) >= 6 else matches
+        raw = json.dumps(sample, sort_keys=True, default=str)
+        return hashlib.md5(raw.encode()).hexdigest()
 
     def _init_team_state(self):
         return {
@@ -63,16 +71,40 @@ class FeatureService:
             "recent_results": []
         }
 
-    def _update_elo_attack_defense(self, atk_rating, def_rating, goals_scored, k=20):
+    def _update_elo_attack_defense(
+        self,
+        atk_rating: float,
+        def_rating: float,
+        goals_scored: int,
+        matches_played: int = 0,
+        k_base: float = 40.0,
+        k_decay: float = 20.0,
+    ):
+        """
+        ML-02 FIX: Adaptive-K ELO update.
+
+        Previously K was fixed at 20 for every match and every team.  This
+        treated a newly-promoted side's 1st match the same as a top-flight
+        club's 40th match — ignoring the large uncertainty gap.
+
+        Adaptive formula:  K = K_BASE / (1 + matches_played / K_DECAY)
+          - Newly added team (0 matches): K ≈ 40  (learns fast, high volatility)
+          - Mid-season     (20 matches): K ≈ 20  (previous fixed value)
+          - Established    (60 matches): K ≈ 10  (conservative, stable signal)
+
+        The Margin-of-Victory multiplier (mov) is kept unchanged.
+        """
+        k = k_base / (1.0 + matches_played / k_decay)
+
         expected = 1.0 / (1.0 + 10.0 ** ((def_rating - atk_rating) / 400.0))
-        if goals_scored == 0: actual = 0.0
+        if goals_scored == 0:   actual = 0.0
         elif goals_scored == 1: actual = 0.5
         elif goals_scored == 2: actual = 0.8
-        else: actual = 1.0
-        
+        else:                   actual = 1.0
+
         mov = 1.0 if goals_scored <= 1 else (11.0 + goals_scored) / 8.0
         change = k * mov * (actual - expected)
-        
+
         return atk_rating + change, def_rating - change
 
     def _compute_all_features(self, matches: list) -> tuple:
@@ -208,14 +240,27 @@ class FeatureService:
 
                     "target_home_goals": home_goals,
                     "target_away_goals": away_goals,
+
+                    # BUG-01 FIX: Match metadata — NOT in FEATURE_COLS so they are
+                    # invisible to the model, but available for building a rich
+                    # holdout set in model_service for true out-of-sample evaluation.
+                    "_match_home_id":   home_id,
+                    "_match_away_id":   away_id,
+                    "_match_home_name": str(getattr(row, "homeTeam_name", "")),
+                    "_match_away_name": str(getattr(row, "awayTeam_name", "")),
+                    "_match_date":      str(match_date),
                 })
 
             # ── UPDATE STATE POST-MATCH ────────────────────────────────────
+            # ML-02 FIX: Pass matches_played so _update_elo_attack_defense
+            # computes an adaptive K (high for new teams, lower for established ones).
             new_h_atk, new_a_def = self._update_elo_attack_defense(
-                h_state["attack_elo"], a_state["defense_elo"], home_goals
+                h_state["attack_elo"], a_state["defense_elo"], home_goals,
+                matches_played=h_state["matches_played"],
             )
             new_a_atk, new_h_def = self._update_elo_attack_defense(
-                a_state["attack_elo"], h_state["defense_elo"], away_goals
+                a_state["attack_elo"], h_state["defense_elo"], away_goals,
+                matches_played=a_state["matches_played"],
             )
             h_state["attack_elo"] = new_h_atk
             a_state["defense_elo"] = new_a_def

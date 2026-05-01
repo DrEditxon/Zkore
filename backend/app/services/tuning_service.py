@@ -47,27 +47,52 @@ class TuningService:
 
     def tune_league(self, league_code: str, X_train, y_train):
         """
-        Ejecuta RandomizedSearchCV para encontrar los hiperparámetros óptimos 
-        (AutoML ligero) adaptados al estilo de goles de la liga.
+        ML-04 FIX: Búsqueda de hiperparámetros mejorada.
+
+        Cambios respecto a la versión anterior:
+        ─────────────────────────────────────────
+        1. TimeSeriesSplit en lugar de KFold aleatorio.
+           El KFold mezclaba partidos futuros en el training fold para validar
+           partidos pasados → data leakage temporal.  TimeSeriesSplit garantiza
+           que el fold de validación siempre es cronológicamente posterior al de
+           entrenamiento.
+
+        2. n_iter: 15 → 50.
+           El espacio de búsqueda es 6-dimensional; 15 iteraciones son
+           insuficientes para cubrirlo.  50 da 3x mejor cobertura.
+
+        3. Scoring: neg_mean_absolute_error → neg_mean_squared_error.
+           MSE penaliza errores grandes más que MAE, lo cual es más relevante
+           para Poisson donde sobreestimar 3+ goles es muy costoso.
+
+        4. Rangos ampliados para n_estimators, learning_rate y min_child_weight.
         """
-        logger.info(f"[{league_code}] Iniciando Tuning Automático de Hiperparámetros (Fase 3)...")
-        
+        from sklearn.model_selection import TimeSeriesSplit
+
+        logger.info(f"[{league_code}] Iniciando Tuning Automático (ML-04 mejorado)...")
+
         param_dist = {
-            "n_estimators": randint(50, 300),
-            "max_depth": randint(2, 6),
-            "learning_rate": uniform(0.005, 0.05),
-            "subsample": uniform(0.5, 0.4),
-            "colsample_bytree": uniform(0.5, 0.4),
-            "min_child_weight": randint(3, 15),
+            "n_estimators":      randint(50, 400),
+            "max_depth":         randint(2, 7),
+            "learning_rate":     uniform(0.005, 0.095),   # [0.005, 0.100]
+            "subsample":         uniform(0.5, 0.45),       # [0.50, 0.95]
+            "colsample_bytree":  uniform(0.5, 0.45),       # [0.50, 0.95]
+            "min_child_weight":  randint(3, 20),
         }
-        
+
         xgb = XGBRegressor(objective="count:poisson", random_state=42, verbosity=0)
-        
-        # Búsqueda aleatoria: 15 iteraciones con validación cruzada k=3
+
+        # ML-04 FIX: TimeSeriesSplit respects chronological order
+        tscv = TimeSeriesSplit(n_splits=5)
+
         search = RandomizedSearchCV(
-            xgb, param_distributions=param_dist,
-            n_iter=15, cv=3, scoring="neg_mean_absolute_error",
-            random_state=42, n_jobs=-1
+            xgb,
+            param_distributions=param_dist,
+            n_iter=50,                           # 3× more coverage than before
+            cv=tscv,                             # temporal-aware cross-validation
+            scoring="neg_mean_squared_error",    # penalises large errors more
+            random_state=42,
+            n_jobs=-1,
         )
         
         search.fit(X_train, y_train)

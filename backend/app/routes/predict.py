@@ -121,8 +121,15 @@ def get_value_bets(league_code: str, background_tasks: BackgroundTasks, api_key:
         h_id = m["homeTeam"]["id"]
         a_id = m["awayTeam"]["id"]
 
-        h_st = team_stats.get(h_id, {"hg":1, "hc":1, "hm":1})
-        a_st = team_stats.get(a_id, {"ag":1, "ac":1, "am":1})
+        # BUG-04 FIX: League-average fallback for teams with no historical stats.
+        # The old fallback {hg:1, hc:1, hm:1} produced:
+        #   h_atk = (1/1) / league_home_goals ≈ 0.71  (below-average, arbitrary)
+        # The new fallback uses actual league means, yielding attack/defense
+        # strengths of exactly 1.0 — the correct neutral prior for unknown teams.
+        h_fallback = {"hg": league_home_goals, "hc": league_away_goals, "hm": 1}
+        a_fallback = {"ag": league_away_goals, "ac": league_home_goals, "am": 1}
+        h_st = team_stats.get(h_id, h_fallback)
+        a_st = team_stats.get(a_id, a_fallback)
 
         # Bookie simulation (Basic Poisson)
         h_atk = (h_st["hg"] / max(1, h_st["hm"])) / max(0.1, league_home_goals)

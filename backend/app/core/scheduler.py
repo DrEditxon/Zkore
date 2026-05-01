@@ -67,14 +67,37 @@ def _run_scheduled_retraining():
         except Exception as e:
             logger.error(f"[Scheduler] Unexpected error in scheduling loop: {e}")
 
+        # ML-05: Run feedback loop for all leagues (separate try/except so a
+        # Supabase error never blocks the normal model-check cycle)
+        try:
+            from app.services.feedback_service import feedback_service
+            logger.info("[Scheduler] Running feedback loop (prediction reconciliation)...")
+            for league_code in SCHEDULED_LEAGUES:
+                try:
+                    summary = feedback_service.run_for_league(league_code)
+                    if summary["resolved"] > 0 or summary["avg_brier"] is not None:
+                        logger.info(
+                            f"[Scheduler] [{league_code}] Feedback: "
+                            f"resolved={summary['resolved']}, "
+                            f"brier={summary['avg_brier']}, "
+                            f"drift={summary['drift_detected']}"
+                        )
+                except Exception as e:
+                    logger.error(f"[Scheduler] Feedback error for {league_code}: {e}")
+        except Exception as e:
+            logger.error(f"[Scheduler] Feedback loop import/run error: {e}")
+
         logger.info(f"[Scheduler] Next check in {SCHEDULE_INTERVAL_SECONDS // 3600} hours.")
         time.sleep(SCHEDULE_INTERVAL_SECONDS)
 
 
 def _retrain_league(league_code: str, data_service, model_service):
     """Synchronously retrain a single league inside the scheduler thread."""
-    if model_service._training_in_progress.get(league_code):
-        logger.info(f"[Scheduler] {league_code}: Training already in progress. Skipping.")
+    # BUG-03 FIX: Use _is_training_locked() instead of the in-memory dict so
+    # that the scheduler correctly detects training started by any Gunicorn worker,
+    # not just the one running this scheduler thread.
+    if model_service._is_training_locked(league_code):
+        logger.info(f"[Scheduler] {league_code}: Training already in progress (cross-process check). Skipping.")
         return
 
     model_service._training_in_progress[league_code] = True

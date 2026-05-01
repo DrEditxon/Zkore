@@ -108,7 +108,98 @@ class SupabaseService:
             logger.error(f"[Supabase] get_top_predictions error: {e}")
             return []
 
+    # ─── Feedback Loop: Prediction reconciliation (ML-05) ────────────────────
+
+    def get_unresolved_predictions(self, league_code: str) -> list:
+        """
+        Returns predictions that have a past utc_date but no actual result yet
+        (actual_verdict IS NULL).  Used by FeedbackService to find matches
+        to reconcile.
+        """
+        if not self.enabled:
+            return []
+        try:
+            from datetime import datetime, timezone
+            now_str = datetime.now(timezone.utc).isoformat()
+            # Fetch predictions whose match date is in the past and have no result
+            endpoint = (
+                f"{self.url}/rest/v1/predictions"
+                f"?league_code=eq.{league_code}"
+                f"&utc_date=lt.{now_str}"
+                f"&actual_verdict=is.null"
+                f"&order=utc_date.desc"
+                f"&limit=50"
+            )
+            r = self.session.get(endpoint, headers=self.headers, timeout=5)
+            return r.json() if r.status_code == 200 else []
+        except Exception as e:
+            logger.error(f"[Supabase] get_unresolved_predictions error: {e}")
+            return []
+
+    def resolve_prediction(
+        self,
+        match_id: int,
+        actual_home: int,
+        actual_away: int,
+        actual_verdict: str,
+        brier_score: float,
+    ) -> bool:
+        """
+        Updates a stored prediction row with the real match outcome and the
+        computed Brier Score.  Uses PATCH (partial update) so only these fields
+        are written; all other prediction data is preserved.
+
+        Returns True on success.  Requires the `predictions` Supabase table to
+        have the columns: actual_home_goals, actual_away_goals, actual_verdict,
+        brier_score  (all nullable — add them via Supabase dashboard if missing).
+        """
+        if not self.enabled:
+            return False
+        try:
+            endpoint = f"{self.url}/rest/v1/predictions?match_id=eq.{match_id}"
+            patch_headers = {**self.headers, "Content-Type": "application/json"}
+            data = {
+                "actual_home_goals": actual_home,
+                "actual_away_goals": actual_away,
+                "actual_verdict":    actual_verdict,
+                "brier_score":       round(brier_score, 6),
+            }
+            r = self.session.patch(endpoint, headers=patch_headers, json=data, timeout=5)
+            if r.status_code in (200, 204):
+                return True
+            logger.error(f"[Supabase] resolve_prediction failed for match {match_id}: {r.text}")
+            return False
+        except Exception as e:
+            logger.error(f"[Supabase] resolve_prediction error: {e}")
+            return False
+
+    def get_resolved_predictions(self, league_code: str, days: int = 14) -> list:
+        """
+        Returns predictions that HAVE been resolved (actual_verdict IS NOT NULL)
+        within the last `days` days.  Used by FeedbackService to compute rolling
+        Brier Scores for drift detection.
+        """
+        if not self.enabled:
+            return []
+        try:
+            from datetime import datetime, timezone, timedelta
+            cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+            endpoint = (
+                f"{self.url}/rest/v1/predictions"
+                f"?league_code=eq.{league_code}"
+                f"&utc_date=gte.{cutoff}"
+                f"&actual_verdict=not.is.null"
+                f"&order=utc_date.desc"
+                f"&limit=200"
+            )
+            r = self.session.get(endpoint, headers=self.headers, timeout=5)
+            return r.json() if r.status_code == 200 else []
+        except Exception as e:
+            logger.error(f"[Supabase] get_resolved_predictions error: {e}")
+            return []
+
     # ─── Storage: Model persistence ───────────────────────────────────────────
+
 
     def ensure_bucket_exists(self, bucket_name: str = MODELS_BUCKET) -> bool:
         """
