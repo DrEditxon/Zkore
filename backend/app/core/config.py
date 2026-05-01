@@ -10,6 +10,9 @@ class Settings:
     if not FOOTBALL_DATA_API_KEY:
         raise ValueError("FOOTBALL_DATA_API_KEY is required but not set in the environment.")
 
+    # Market integration
+    ODDS_API_KEY = os.getenv("ODDS_API_KEY", "")
+
     # Cache duration in seconds
     CACHE_DURATION = int(os.getenv("CACHE_DURATION", "3600"))
     CACHE_DURATION_HISTORICAL = int(os.getenv("CACHE_DURATION_HISTORICAL", "86400"))

@@ -53,6 +53,23 @@ def predict_match(
     p_drw = markets["prob_draw"]
     p_hom = markets["prob_home_win"]
 
+    # FASE 2: Ensemble con cuotas de mercado (The Odds API) si están disponibles
+    from app.services.market_service import market_service
+    market_probs = market_service.get_market_probabilities(league_code, home_name, away_name)
+    
+    if market_probs:
+        logger.info(f"[{league_code}] Ensembling with Market Odds (Bookie: {market_probs['bookmaker']})")
+        # Promedio ponderado 50/50 entre XGBoost y las cuotas reales del mercado
+        p_hom = (p_hom + market_probs["prob_home"]) / 2
+        p_drw = (p_drw + market_probs["prob_draw"]) / 2
+        p_awy = (p_awy + market_probs["prob_away"]) / 2
+        
+        # Normalizar para garantizar que sumen 100%
+        total = p_hom + p_drw + p_awy
+        p_hom = (p_hom / total) * 100
+        p_drw = (p_drw / total) * 100
+        p_awy = (p_awy / total) * 100
+
     explicacion = generate_heuristic_explanation(
         lambda_h, lambda_a, home_name, away_name, p_hom / 100, p_awy / 100
     )
@@ -74,9 +91,9 @@ def predict_match(
             "visitante": round(lambda_a, 2),
         },
         "probabilidades": {
-            "local":     p_hom,
-            "empate":    p_drw,
-            "visitante": p_awy,
+            "local":     round(p_hom, 2),
+            "empate":    round(p_drw, 2),
+            "visitante": round(p_awy, 2),
         },
         "metricas_mercado":    markets,
         "distribucion_goles":  goal_dists,
@@ -84,7 +101,7 @@ def predict_match(
         "modelo_info": {
             "partidos_entrenados": n_rows,
             "confianza":  conf,
-            "tipo":       "XGBoost Poisson + Dixon-Coles",
+            "tipo":       "Ensemble (XGBoost + The Odds API)" if market_probs else "XGBoost Poisson + Dixon-Coles",
             "explicacion": explicacion,
             "mae_home":   round(mae_home, 3) if mae_home != 999 else None,
             "mae_away":   round(mae_away, 3) if mae_away != 999 else None,
