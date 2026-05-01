@@ -357,7 +357,7 @@ class DataService:
 
     def get_historical_matches_espn(self, league_code: str) -> list:
         """
-        Fetches last 3 seasons of matches from ESPN by date ranges.
+        Fetches last ~2 years of matches from ESPN in chunks to avoid API limits.
         """
         if league_code in self._matches_mem_cache:
             return self._matches_mem_cache[league_code]
@@ -370,48 +370,52 @@ class DataService:
         from app.services.market_service import ESPN_MAP
         espn_code = ESPN_MAP.get(league_code)
         
-        # We fetch last ~2.5 years in chunks
-        end_date = datetime.date.today()
-        start_date = end_date - datetime.timedelta(days=365*2.5)
-        
-        date_str = f"{start_date.strftime('%Y%m%d')}-{end_date.strftime('%Y%m%d')}"
-        url = f"https://site.api.espn.com/apis/site/v2/sports/soccer/{espn_code}/scoreboard"
+        # We fetch last 2 years in 1-year chunks
+        today = datetime.date.today()
+        chunks = [
+            (today - datetime.timedelta(days=365), today),
+            (today - datetime.timedelta(days=730), today - datetime.timedelta(days=366)),
+        ]
         
         matches = []
-        try:
-            # ESPN usually handles large ranges, but sometimes needs chunks.
-            # We'll try the whole range first.
-            response = self.session.get(url, params={"dates": date_str, "limit": 1000}, timeout=15)
-            response.raise_for_status()
-            data = response.json()
-            
-            for ev in data.get("events", []):
-                if ev.get("status", {}).get("type", {}).get("state") != "post":
-                    continue
-                comp = ev.get("competitions", [])[0] if ev.get("competitions") else {}
-                competitors = comp.get("competitors", [])
-                if len(competitors) < 2: continue
+        for start, end in chunks:
+            date_str = f"{start.strftime('%Y%m%d')}-{end.strftime('%Y%m%d')}"
+            url = f"https://site.api.espn.com/apis/site/v2/sports/soccer/{espn_code}/scoreboard"
+            try:
+                # Remove limit=1000 to be safe, ESPN usually returns all in range anyway
+                response = self.session.get(url, params={"dates": date_str}, timeout=15)
+                response.raise_for_status()
+                data = response.json()
                 
-                home_c = next((c for c in competitors if c.get("homeAway") == "home"), competitors[0])
-                away_c = next((c for c in competitors if c.get("homeAway") == "away"), competitors[1])
-                
-                try:
-                    h_score = int(home_c.get("score", 0))
-                    a_score = int(away_c.get("score", 0))
-                except:
-                    continue
+                for ev in data.get("events", []):
+                    if ev.get("status", {}).get("type", {}).get("state") != "post":
+                        continue
+                    comp = ev.get("competitions", [])[0] if ev.get("competitions") else {}
+                    competitors = comp.get("competitors", [])
+                    if len(competitors) < 2: continue
+                    
+                    home_c = next((c for c in competitors if c.get("homeAway") == "home"), competitors[0])
+                    away_c = next((c for c in competitors if c.get("homeAway") == "away"), competitors[1])
+                    
+                    try:
+                        h_score = int(home_c.get("score", 0))
+                        a_score = int(away_c.get("score", 0))
+                    except:
+                        continue
 
-                matches.append({
-                    "utcDate":        ev["date"],
-                    "homeTeam_id":    int(home_c["team"]["id"]),
-                    "homeTeam_name":  home_c["team"]["name"],
-                    "awayTeam_id":    int(away_c["team"]["id"]),
-                    "awayTeam_name":  away_c["team"]["name"],
-                    "homeGoals":      h_score,
-                    "awayGoals":      a_score,
-                })
-        except Exception as e:
-            logger.error(f"Error fetching ESPN historical for {league_code}: {e}")
+                    matches.append({
+                        "utcDate":        ev["date"],
+                        "homeTeam_id":    int(home_c["team"]["id"]),
+                        "homeTeam_name":  home_c["team"]["name"],
+                        "awayTeam_id":    int(away_c["team"]["id"]),
+                        "awayTeam_name":  away_c["team"]["name"],
+                        "homeGoals":      h_score,
+                        "awayGoals":      a_score,
+                    })
+            except Exception as e:
+                logger.error(f"Error fetching ESPN chunk {date_str} for {league_code}: {e}")
+
+        if not matches:
             return []
 
         # Sort by date descending
