@@ -344,3 +344,5 @@ body{font-family:var(--font);background:var(--bg);color:var(--text-primary);heig
 /* RESPONSIVE */
 @media(max-width:1100px){.dashboard-grid{grid-template-columns:1fr}.bottom-grid{grid-template-columns:1fr}.stat-cards{grid-template-columns:repeat(2,1fr)}}
 @media(max-width:768px){.sidebar{transform:translateX(-240px);width:240px}.sidebar.open{transform:translateX(0)}.main-content{margin-left:0!important}.stat-cards{grid-template-columns:1fr 1fr}.view{padding:16px}.topbar{padding:0 16px}.hist-card{grid-template-columns:70px 1fr}.hist-score,.hist-details{display:none}.markets-grid{grid-template-columns:repeat(2,1fr)}.goal-dist-grid{grid-template-columns:1fr}}
+\ n @ k e y f r a m e s   p u l s e   {   0 %   {   o p a c i t y :   1 ;   t r a n s f o r m :   s c a l e ( 1 ) ;   }   5 0 %   {   o p a c i t y :   0 . 5 ;   t r a n s f o r m :   s c a l e ( 1 . 2 ) ;   }   1 0 0 %   {   o p a c i t y :   1 ;   t r a n s f o r m :   s c a l e ( 1 ) ;   }   }  
+ 

@@ -178,6 +178,32 @@ class DataService:
         with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
             data["matches"] = list(executor.map(fetch_prediction, data["matches"]))
 
+        # ── Enrich with live data from ESPN ─────────────────────────────
+        try:
+            from app.services.market_service import market_service
+            import difflib
+            live_data = market_service.get_live_matches(league_code)
+            
+            for m in data["matches"]:
+                h_norm = market_service._normalize_name(m["homeTeam"]["name"])
+                a_norm = market_service._normalize_name(m["awayTeam"]["name"])
+                live_info = live_data.get((h_norm, a_norm))
+                
+                if not live_info:
+                    for (hk, ak), v in live_data.items():
+                        if (difflib.SequenceMatcher(None, h_norm, hk).ratio() > 0.7 or h_norm in hk or hk in h_norm) and \
+                           (difflib.SequenceMatcher(None, a_norm, ak).ratio() > 0.7 or a_norm in ak or ak in a_norm):
+                            live_info = v
+                            break
+                            
+                if live_info:
+                    m["is_live"] = live_info["state"] == "in"
+                    m["live_score"] = live_info["score"]
+                    m["live_minute"] = live_info["minute"]
+                    m["status_espn"] = live_info["state"]
+        except Exception as e:
+            logger.error(f"Failed to enrich live matches: {e}")
+
         any_training = any(m.get("training") for m in data["matches"])
         if not any_training:
             self._set_to_cache(cache_key, data)

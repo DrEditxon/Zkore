@@ -248,7 +248,7 @@ function renderPredictionsTable(matches) {
                 <div class="match-cell">
                     <span class="match-home" style="display:flex;align-items:center">${hImg}${m.homeTeam.name}</span>
                     <span class="match-away" style="display:flex;align-items:center">${aImg}vs ${m.awayTeam.name}</span>
-                    <span class="match-time">${date}</span>
+                    <span class="match-time">${m.is_live ? `<span style="color:#ff4757;font-weight:700;display:flex;align-items:center;gap:4px"><span style="display:inline-block;width:6px;height:6px;background:#ff4757;border-radius:50%;animation:pulse 1.5s infinite"></span>EN VIVO ${m.live_minute} | ${m.live_score}</span>` : date}</span>
                 </div>
             </td>
             <td>
@@ -481,7 +481,7 @@ function renderPartidosView() {
                 </div>
             </div>
             <div class="mcd-footer">
-                <span>${date}</span>
+                <span>${m.is_live ? `<span style="color:#ff4757;font-weight:700;display:flex;align-items:center;gap:4px"><span style="display:inline-block;width:6px;height:6px;background:#ff4757;border-radius:50%;animation:pulse 1.5s infinite"></span>EN VIVO ${m.live_minute} | ${m.live_score}</span>` : date}</span>
                 <span class="mcd-verdict verdict-${isTraining?'Q':verdict}">${isTraining?'Calc.':verdict}</span>
             </div>
         </div>`;
@@ -524,7 +524,7 @@ function renderAllPredictionsView() {
         const aImg = aCrestUrl ? `<img src="${aCrestUrl}" style="width:20px;height:20px;object-fit:contain;vertical-align:middle;margin-right:8px" onerror="this.style.display='none'" alt="">` : "";
 
         return `<tr onclick="openPredModal(${m.id}, ${m.homeTeam.id}, ${m.awayTeam.id}, '${esc(m.homeTeam.name)}', '${esc(m.awayTeam.name)}', '${esc(m.homeTeam.crest||"")}', '${esc(m.awayTeam.crest||"")}', '${m.utcDate}')">
-            <td style="font-size:0.75rem;color:var(--text-muted);font-family:var(--mono)">${dateStr}</td>
+            <td style="font-size:0.75rem;color:var(--text-muted);font-family:var(--mono)">${m.is_live ? `<span style="color:#ff4757;font-weight:700;display:flex;align-items:center;gap:4px"><span style="display:inline-block;width:6px;height:6px;background:#ff4757;border-radius:50%;animation:pulse 1.5s infinite"></span>EN VIVO ${m.live_minute}<br>${m.live_score}</span>` : dateStr}</td>
             <td>
                 <div style="display:flex;flex-direction:column;gap:4px;font-weight:600">
                     <span style="display:flex;align-items:center">${hImg}${m.homeTeam.name}</span>

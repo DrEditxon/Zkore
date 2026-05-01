@@ -305,4 +305,64 @@ class MarketService:
             "margin_removed": round((overround - 1.0) * 100, 2)
         }
 
+    def get_live_matches(self, league_code: str) -> dict:
+        """
+        Returns a dict of currently live or today's matches from ESPN.
+        Format: {(norm_home, norm_away): {'state': 'in'/'pre'/'post', 'score': '1 - 0', 'minute': '52\\''}}
+        """
+        espn_code = ESPN_MAP.get(league_code)
+        if not espn_code:
+            return {}
+            
+        # Short cache (1 min) to avoid spamming ESPN
+        cache_path = self._get_cache_path(espn_code, prefix="live_")
+        data = None
+        if os.path.exists(cache_path):
+            if datetime.now().timestamp() - os.path.getmtime(cache_path) < 60:
+                try:
+                    with open(cache_path, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                except Exception:
+                    pass
+        
+        if not data:
+            try:
+                url = f"https://site.api.espn.com/apis/site/v2/sports/soccer/{espn_code}/scoreboard"
+                r = self.session.get(url, timeout=5)
+                if r.status_code == 200:
+                    data = r.json()
+                    with open(cache_path, "w", encoding="utf-8") as f:
+                        json.dump(data, f)
+            except Exception as e:
+                logger.error(f"Error fetching live scoreboard for {league_code}: {e}")
+                return {}
+                
+        if not data: return {}
+        
+        live_dict = {}
+        for ev in data.get("events", []):
+            comp = ev.get("competitions", [])[0] if ev.get("competitions") else {}
+            competitors = comp.get("competitors", [])
+            if len(competitors) < 2: continue
+            
+            home_c = next((c for c in competitors if c.get("homeAway") == "home"), competitors[0])
+            away_c = next((c for c in competitors if c.get("homeAway") == "away"), competitors[1])
+            
+            h_name = self._normalize_name(home_c.get("team", {}).get("name", ""))
+            a_name = self._normalize_name(away_c.get("team", {}).get("name", ""))
+            h_score = home_c.get("score", "0")
+            a_score = away_c.get("score", "0")
+            
+            status = ev.get("status", {}).get("type", {})
+            state = status.get("state", "pre")  # 'in', 'pre', 'post'
+            minute = status.get("shortDetail", "")
+            
+            live_dict[(h_name, a_name)] = {
+                "state": state,
+                "score": f"{h_score} - {a_score}",
+                "minute": minute
+            }
+            
+        return live_dict
+
 market_service = MarketService()
