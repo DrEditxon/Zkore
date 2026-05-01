@@ -33,6 +33,7 @@ ESPN_MAP = {
     "DED": "ned.1",
     "BSA": "bra.1",
     "ELC": "eng.2",
+    "COL": "col.1",
 }
 
 

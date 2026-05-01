@@ -6,6 +6,7 @@ import logging
 import hashlib
 import os
 import json
+import datetime
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -100,6 +101,52 @@ class DataService:
             })
         return {"matchday": current_matchday, "matches": matches}
 
+    def get_upcoming_matches_espn(self, league_code: str, limit: int = 50):
+        """
+        Fallback for leagues not in football-data.org (like COL).
+        """
+        from app.services.market_service import ESPN_MAP
+        espn_code = ESPN_MAP.get(league_code)
+        if not espn_code:
+            return {"matchday": 0, "matches": []}
+
+        url = f"https://site.api.espn.com/apis/site/v2/sports/soccer/{espn_code}/scoreboard"
+        try:
+            response = self.session.get(url, timeout=10)
+            response.raise_for_status()
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Error fetching ESPN upcoming for {league_code}: {e}")
+            return {"matchday": 0, "matches": []}
+
+        data = response.json()
+        matches = []
+        for ev in data.get("events", []):
+            comp = ev.get("competitions", [])[0] if ev.get("competitions") else {}
+            competitors = comp.get("competitors", [])
+            if len(competitors) < 2: continue
+            
+            home_c = next((c for c in competitors if c.get("homeAway") == "home"), competitors[0])
+            away_c = next((c for c in competitors if c.get("homeAway") == "away"), competitors[1])
+            
+            matches.append({
+                "id": int(ev["id"]),
+                "utcDate": ev["date"],
+                "homeTeam": {
+                    "id": int(home_c["team"]["id"]),
+                    "name": home_c["team"]["name"],
+                    "crest": home_c["team"].get("logo"),
+                },
+                "awayTeam": {
+                    "id": int(away_c["team"]["id"]),
+                    "name": away_c["team"]["name"],
+                    "crest": away_c["team"].get("logo"),
+                },
+            })
+        
+        # ESPN scoreboard usually has one 'day' or round
+        matchday = data.get("day", {}).get("number", 0)
+        return {"matchday": matchday, "matches": matches}
+
     def get_predicted_upcoming(self, league_code: str, background_tasks=None):
         """
         Fetches upcoming matches and computes predictions in parallel.
@@ -117,7 +164,12 @@ class DataService:
             if cached:
                 return cached
 
-        data = self.get_upcoming_matches(league_code)
+        # Use ESPN for COL, else football-data
+        if league_code == "COL":
+            data = self.get_upcoming_matches_espn(league_code)
+        else:
+            data = self.get_upcoming_matches(league_code)
+
         if not data["matches"]:
             return data
 
@@ -220,6 +272,9 @@ class DataService:
     # ─── Standings ───────────────────────────────────────────────────────────
 
     def get_standings(self, league_code: str):
+        if league_code == "COL":
+            return self.get_standings_espn(league_code)
+            
         cached = self._get_from_cache(f"standings_{league_code}")
         if cached:
             return cached
@@ -234,14 +289,30 @@ class DataService:
         self._set_to_cache(f"standings_{league_code}", data)
         return data
 
+    def get_standings_espn(self, league_code: str):
+        from app.services.market_service import ESPN_MAP
+        espn_code = ESPN_MAP.get(league_code)
+        url = f"https://site.api.espn.com/apis/v2/sports/soccer/{espn_code}/standings"
+        try:
+            response = self.session.get(url, timeout=10)
+            response.raise_for_status()
+            data = response.json()
+            # Convert to a minimal structure that model_service expects
+            # We just need team names/ids for ELO if needed
+            return data
+        except Exception as e:
+            logger.error(f"Error fetching ESPN standings for {league_code}: {e}")
+            return None
+
     # ─── Historical matches ──────────────────────────────────────────────────
 
     def get_historical_matches(self, league_code: str) -> list:
         """
         PERF FIX: Two-level cache.
-        1. In-memory (_matches_mem_cache): instant — avoids JSON parse on every predict call.
-        2. Disk: survives process restart within the TTL window.
         """
+        if league_code == "COL":
+            return self.get_historical_matches_espn(league_code)
+
         if league_code in self._matches_mem_cache:
             return self._matches_mem_cache[league_code]
 
@@ -280,6 +351,72 @@ class DataService:
                 "awayGoals":      away_goals,
             })
 
+        self._set_to_cache(f"matches_{league_code}", matches)
+        self._matches_mem_cache[league_code] = matches
+        return matches
+
+    def get_historical_matches_espn(self, league_code: str) -> list:
+        """
+        Fetches last 3 seasons of matches from ESPN by date ranges.
+        """
+        if league_code in self._matches_mem_cache:
+            return self._matches_mem_cache[league_code]
+
+        cached = self._get_from_cache(f"matches_{league_code}", ttl=settings.CACHE_DURATION_HISTORICAL)
+        if cached:
+            self._matches_mem_cache[league_code] = cached
+            return cached
+
+        from app.services.market_service import ESPN_MAP
+        espn_code = ESPN_MAP.get(league_code)
+        
+        # We fetch last ~2.5 years in chunks
+        end_date = datetime.date.today()
+        start_date = end_date - datetime.timedelta(days=365*2.5)
+        
+        date_str = f"{start_date.strftime('%Y%m%d')}-{end_date.strftime('%Y%m%d')}"
+        url = f"https://site.api.espn.com/apis/site/v2/sports/soccer/{espn_code}/scoreboard"
+        
+        matches = []
+        try:
+            # ESPN usually handles large ranges, but sometimes needs chunks.
+            # We'll try the whole range first.
+            response = self.session.get(url, params={"dates": date_str, "limit": 1000}, timeout=15)
+            response.raise_for_status()
+            data = response.json()
+            
+            for ev in data.get("events", []):
+                if ev.get("status", {}).get("type", {}).get("state") != "post":
+                    continue
+                comp = ev.get("competitions", [])[0] if ev.get("competitions") else {}
+                competitors = comp.get("competitors", [])
+                if len(competitors) < 2: continue
+                
+                home_c = next((c for c in competitors if c.get("homeAway") == "home"), competitors[0])
+                away_c = next((c for c in competitors if c.get("homeAway") == "away"), competitors[1])
+                
+                try:
+                    h_score = int(home_c.get("score", 0))
+                    a_score = int(away_c.get("score", 0))
+                except:
+                    continue
+
+                matches.append({
+                    "utcDate":        ev["date"],
+                    "homeTeam_id":    int(home_c["team"]["id"]),
+                    "homeTeam_name":  home_c["team"]["name"],
+                    "awayTeam_id":    int(away_c["team"]["id"]),
+                    "awayTeam_name":  away_c["team"]["name"],
+                    "homeGoals":      h_score,
+                    "awayGoals":      a_score,
+                })
+        except Exception as e:
+            logger.error(f"Error fetching ESPN historical for {league_code}: {e}")
+            return []
+
+        # Sort by date descending
+        matches.sort(key=lambda x: x["utcDate"], reverse=True)
+        
         self._set_to_cache(f"matches_{league_code}", matches)
         self._matches_mem_cache[league_code] = matches
         return matches

@@ -22,7 +22,7 @@ SCHEDULE_INTERVAL_SECONDS = 6 * 3600  # 6 hours
 
 # Leagues to keep warm proactively
 # Matches config.py LEAGUES_METADATA keys (minus CL/CLI which have no models)
-SCHEDULED_LEAGUES = ["PL", "PD", "BL1", "SA", "FL1", "PPL", "DED", "BSA", "ELC"]
+SCHEDULED_LEAGUES = ["PL", "PD", "BL1", "SA", "FL1", "PPL", "DED", "BSA", "ELC", "COL"]
 
 
 def _run_scheduled_retraining():

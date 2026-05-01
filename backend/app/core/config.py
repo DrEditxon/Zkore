@@ -44,6 +44,7 @@ class Settings:
         "DED": {"name": "Eredivisie",        "flag": "https://crests.football-data.org/8601.svg"},
         "BSA": {"name": "Série A Brasil",    "flag": "https://crests.football-data.org/764.svg"},
         "ELC": {"name": "Championship",      "flag": "https://crests.football-data.org/770.svg"},
+        "COL": {"name": "Liga BetPlay (COL)", "flag": "https://upload.wikimedia.org/wikipedia/commons/2/21/Flag_of_Colombia.svg"},
     }
 
 settings = Settings()
