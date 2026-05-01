@@ -802,7 +802,7 @@ function renderEstadisticasView() {
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:12px;font-size:.85rem;color:var(--text-secondary)">
                 <div><strong style="color:var(--text-primary)">Algoritmo</strong><br>XGBoost Regressor para Expected Goals (xG)</div>
                 <div><strong style="color:var(--text-primary)">Probabilidades</strong><br>Distribución Poisson bivariada</div>
-                <div><strong style="color:var(--text-primary)">Calibración</strong><br>Platt Scaling (Logistic Regression)</div>
+                <div><strong style="color:var(--text-primary)">Calibración</strong><br>Isotonic Regression</div>
                 <div><strong style="color:var(--text-primary)">Features</strong><br>ELO, forma, H2H, xG proxy, rest days</div>
             </div>
         </div>`;

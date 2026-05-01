@@ -101,7 +101,7 @@ def predict_match(
         "modelo_info": {
             "partidos_entrenados": n_rows,
             "confianza":  conf,
-            "tipo":       "Ensemble (XGBoost + The Odds API)" if market_probs else "XGBoost Poisson + Dixon-Coles",
+            "tipo":       f"Ensemble (XGBoost + {market_probs['bookmaker']})" if market_probs else "XGBoost Poisson + Dixon-Coles",
             "explicacion": explicacion,
             "mae_home":   round(mae_home, 3) if mae_home != 999 else None,
             "mae_away":   round(mae_away, 3) if mae_away != 999 else None,
