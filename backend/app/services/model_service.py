@@ -268,8 +268,30 @@ class ModelService:
             logger.info(f"[{league_code}] Home xG → MAE: {mae_h:.3f}  RMSE: {rmse_h:.3f}")
             logger.info(f"[{league_code}] Away xG → MAE: {mae_a:.3f}  RMSE: {rmse_a:.3f}")
 
-            # BUG-01 FIX: Save rich holdout metadata so history_service can
-            # evaluate accuracy on matches the model NEVER trained on.
+            # ML-03 FIX: Isotonic Regression calibration.
+            # XGBoost λ values are systematically biased. IsotonicRegression
+            # learns the monotonic mapping λ_pred -> λ_actual using X_val
+            # (which XGBoost never trained on). out_of_bounds='clip' prevents
+            # extrapolation beyond the calibration range.
+            from sklearn.isotonic import IsotonicRegression
+
+            lhv = np.maximum(0.01, xg_home.predict(X_val).astype(float))
+            lav = np.maximum(0.01, xg_away.predict(X_val).astype(float))
+
+            calibrator_home = IsotonicRegression(out_of_bounds="clip", increasing=True)
+            calibrator_home.fit(lhv, y_h_val.astype(float))
+
+            calibrator_away = IsotonicRegression(out_of_bounds="clip", increasing=True)
+            calibrator_away.fit(lav, y_a_val.astype(float))
+
+            mae_h_cal = mean_absolute_error(y_h_val, calibrator_home.predict(lhv))
+            mae_a_cal = mean_absolute_error(y_a_val, calibrator_away.predict(lav))
+            logger.info(
+                f"[{league_code}] Calibration: "
+                f"home {mae_h:.3f}->{mae_h_cal:.3f} | away {mae_a:.3f}->{mae_a_cal:.3f}"
+            )
+
+            # BUG-01 FIX: Save rich holdout metadata for true OOS evaluation.
             _META_COLS = [
                 "_match_home_id", "_match_away_id",
                 "_match_home_name", "_match_away_name", "_match_date",
@@ -278,20 +300,21 @@ class ModelService:
             available_meta = [c for c in _META_COLS if c in df_holdout.columns]
 
             payload = {
-                "xg_home":   xg_home,
-                "xg_away":   xg_away,
-                "n_rows":    len(df_train),
-                "mae_home":  mae_h,
-                "mae_away":  mae_a,
-                "trained_at": datetime.now().isoformat(),
+                "xg_home":          xg_home,
+                "xg_away":          xg_away,
+                "calibrator_home":  calibrator_home,  # ML-03
+                "calibrator_away":  calibrator_away,
+                "n_rows":           len(df_train),
+                "mae_home":         mae_h,
+                "mae_away":         mae_a,
+                "mae_home_cal":     mae_h_cal,
+                "mae_away_cal":     mae_a_cal,
+                "trained_at":       datetime.now().isoformat(),
                 "holdout_matches": (
                     df_holdout[available_meta].to_dict(orient="records")
                     if len(df_holdout) > 0 and available_meta else []
                 ),
             }
-
-            # FASE 1: Se ha eliminado el "Probability calibrator (Platt Scaling)".
-            # El uso de 'count:poisson' y Dixon-Coles genera probabilidades nativas precisas.
 
             # Save new model to local disk
             new_path = self._model_path(league_code, timestamp=True)
@@ -421,6 +444,14 @@ class ModelService:
 
         lambda_home = max(0.01, float(payload["xg_home"].predict(X_pred)[0]))
         lambda_away = max(0.01, float(payload["xg_away"].predict(X_pred)[0]))
+
+        # ML-03: Apply isotonic calibrators if present (backward compatible).
+        cal_h = payload.get("calibrator_home")
+        cal_a = payload.get("calibrator_away")
+        if cal_h is not None:
+            lambda_home = max(0.01, float(cal_h.predict([lambda_home])[0]))
+        if cal_a is not None:
+            lambda_away = max(0.01, float(cal_a.predict([lambda_away])[0]))
 
         return lambda_home, lambda_away, payload
 
