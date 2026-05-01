@@ -266,6 +266,159 @@ class DataService:
             "nota": "Estadísticas predictivas basales activadas.",
         }
 
+    # ─── Multi-season data accumulation (ML-01) ──────────────────────────────
+
+    def _fetch_season(self, league_code: str, season_year: int) -> list:
+        """
+        ML-01: Fetches all FINISHED matches for one past season from
+        football-data.org using the `?season=YYYY` query parameter.
+
+        Returns a list of match dicts in the same format as get_historical_matches()
+        plus `match_id` (int) and `season` (int) fields needed for Supabase storage.
+        """
+        import requests as req_mod
+        url = "https://api.football-data.org/v4/competitions/{code}/matches".format(
+            code=league_code
+        )
+        try:
+            r = self.session.get(
+                url,
+                headers={"X-Auth-Token": self._football_data_key()},
+                params={"status": "FINISHED", "season": season_year},
+                timeout=20,
+            )
+            if r.status_code == 404:
+                logger.warning(f"[{league_code}] Season {season_year} not found (404).")
+                return []
+            if r.status_code == 429:
+                logger.warning(f"[{league_code}] Rate limited fetching season {season_year}.")
+                return []
+            r.raise_for_status()
+        except Exception as e:
+            logger.error(f"[{league_code}] Error fetching season {season_year}: {e}")
+            return []
+
+        matches = []
+        for m in r.json().get("matches", []):
+            score = m.get("score", {})
+            full  = score.get("fullTime", {})
+            hg, ag = full.get("home"), full.get("away")
+            if hg is None or ag is None:
+                continue
+            matches.append({
+                "match_id":      m["id"],
+                "season":        season_year,
+                "utcDate":       m["utcDate"],
+                "homeTeam_id":   m["homeTeam"]["id"],
+                "homeTeam_name": m["homeTeam"]["name"],
+                "awayTeam_id":   m["awayTeam"]["id"],
+                "awayTeam_name": m["awayTeam"]["name"],
+                "homeGoals":     hg,
+                "awayGoals":     ag,
+            })
+        return matches
+
+    def _football_data_key(self) -> str:
+        """Helper to extract the API key from the stored session headers."""
+        return self.session.headers.get("X-Auth-Token", "")
+
+    def get_historical_matches_multi_season(self, league_code: str) -> list:
+        """
+        ML-01 FIX: Returns ALL available matches for a league — past seasons
+        from Supabase merged with the current live season from the API.
+
+        Deduplication key: (utcDate[:10], homeTeam_id, awayTeam_id).
+        Current-season entry wins on conflicts (most accurate data).
+
+        Falls back to single-season if Supabase is disabled or the table is
+        empty (first deploy before bootstrap completes).
+        """
+        from app.services.supabase_service import supabase_service
+
+        current = self.get_historical_matches(league_code)
+
+        if not supabase_service.enabled:
+            return current  # Graceful degradation
+
+        stored = supabase_service.get_stored_historical_matches(league_code)
+        if not stored:
+            logger.debug(f"[{league_code}] No stored historical matches yet — using current season only.")
+            return current
+
+        # Merge: build lookup from stored, then overwrite with current (authoritative)
+        all_matches: dict = {}
+        for m in stored:
+            key = (m["utcDate"][:10], int(m["homeTeam_id"]), int(m["awayTeam_id"]))
+            all_matches[key] = m
+        for m in current:
+            key = (m["utcDate"][:10], int(m["homeTeam_id"]), int(m["awayTeam_id"]))
+            all_matches[key] = m  # current season always wins
+
+        merged = sorted(all_matches.values(), key=lambda x: x["utcDate"])
+        logger.info(
+            f"[{league_code}] Multi-season merge: {len(stored)} stored + "
+            f"{len(current)} current = {len(merged)} total"
+        )
+        return merged
+
+    def bootstrap_historical_seasons(
+        self, league_code: str, seasons_back: int = 3
+    ) -> None:
+        """
+        ML-01: One-time background bootstrap to fetch and store past seasons.
+
+        Design decisions:
+        ─────────────────
+        - Idempotent: skips seasons already in Supabase (safe to call every startup).
+        - Rate-limited: 7s sleep between API calls to respect football-data.org
+          free tier (10 req/min).
+        - Fire-and-forget: runs in a daemon thread; failures are logged, not raised.
+        - Season calculation: seasons are identified by starting year (e.g., 2023
+          means the 2023/24 season). If current month < August, current season
+          started the previous calendar year.
+        """
+        import time
+        from app.services.supabase_service import supabase_service
+        from datetime import datetime
+
+        if not supabase_service.enabled:
+            logger.info(f"[{league_code}] Supabase disabled — skipping historical bootstrap.")
+            return
+
+        now = datetime.now()
+        # Football seasons start in August; before Aug the current season is (year-1)
+        current_season = now.year if now.month >= 8 else now.year - 1
+        past_seasons   = [current_season - i for i in range(1, seasons_back + 1)]
+
+        for season_year in past_seasons:
+            try:
+                if supabase_service.has_stored_season(league_code, season_year):
+                    logger.info(
+                        f"[{league_code}] Season {season_year} already stored — skipping."
+                    )
+                    continue
+
+                logger.info(f"[{league_code}] Bootstrapping season {season_year}...")
+                matches = self._fetch_season(league_code, season_year)
+
+                if not matches:
+                    logger.warning(
+                        f"[{league_code}] Season {season_year}: no matches returned."
+                    )
+                    time.sleep(7)
+                    continue
+
+                count = supabase_service.store_historical_matches(league_code, matches)
+                logger.info(
+                    f"[{league_code}] Season {season_year}: stored {count}/{len(matches)} matches."
+                )
+
+                # Rate limiting: stay safely under 10 req/min
+                time.sleep(7)
+
+            except Exception as e:
+                logger.error(f"[{league_code}] Bootstrap error for season {season_year}: {e}")
+
     # ─── Cache invalidation ───────────────────────────────────────────────────
 
     def invalidate_cache(self, league_code: str):

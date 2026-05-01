@@ -49,6 +49,32 @@ async def lifespan(app: FastAPI):
     import threading
     threading.Thread(target=_supabase_boot, daemon=True, name="supabase-boot").start()
 
+    # ML-01: Historical data bootstrap — fetches past seasons for all leagues and
+    # stores them in Supabase so the model can train on multi-season data.
+    # Runs 120s after startup to let the Supabase boot sequence finish first.
+    # Idempotent: skips seasons already stored — completes in ~5s on repeat deploys.
+    def _historical_bootstrap():
+        import time
+        time.sleep(120)  # Wait for supabase-boot to finish
+        try:
+            from app.services.data_service import data_service
+            from app.core.config import settings
+            logger.info("[Historical Bootstrap] Starting multi-season data fetch...")
+            for league_code in settings.LEAGUES_METADATA.keys():
+                try:
+                    data_service.bootstrap_historical_seasons(
+                        league_code, seasons_back=3
+                    )
+                except Exception as e:
+                    logger.error(f"[Historical Bootstrap] {league_code}: {e}")
+            logger.info("[Historical Bootstrap] Completed.")
+        except Exception as e:
+            logger.error(f"[Historical Bootstrap] Fatal error: {e}")
+
+    threading.Thread(
+        target=_historical_bootstrap, daemon=True, name="historical-bootstrap"
+    ).start()
+
     yield
     logger.info("Zkore API shutting down.")
 

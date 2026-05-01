@@ -202,10 +202,14 @@ class ModelService:
         lock_path = os.path.join(MODELS_DIR, f"{league_code}.lock")
 
         def _do_train():
-            # BUG B FIX: Flush historical cache so we train on the latest results
+            # ML-01 FIX: Use multi-season data for training.
+            # After the historical bootstrap completes, this returns matches from
+            # up to 3 past seasons merged with the current live season, giving
+            # the model 3-4x more training data and better generalisation.
+            # Falls back to current-season-only if Supabase is not available.
             logger.info(f"[{league_code}] Invalidating caches before retraining...")
             data_service.invalidate_cache(league_code)          # disk + memory cache
-            fresh_matches = data_service.get_historical_matches(league_code)  # re-fetch
+            fresh_matches = data_service.get_historical_matches_multi_season(league_code)
 
             # BUG C FIX: Flush feature state cache so next prediction uses fresh ELO
             feature_service.invalidate_cache()

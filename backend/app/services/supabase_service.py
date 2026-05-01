@@ -198,7 +198,120 @@ class SupabaseService:
             logger.error(f"[Supabase] get_resolved_predictions error: {e}")
             return []
 
+    # ─── Historical Matches: Multi-season accumulation (ML-01) ──────────────
+
+    def get_stored_historical_matches(self, league_code: str) -> list:
+        """
+        ML-01: Fetches all historical matches stored in Supabase for a league.
+        Returns them in the same dict format as data_service.get_historical_matches()
+        so they can be merged transparently.
+
+        Requires the `historical_matches` table — see SQL in docs.
+        """
+        if not self.enabled:
+            return []
+        try:
+            endpoint = (
+                f"{self.url}/rest/v1/historical_matches"
+                f"?league_code=eq.{league_code}"
+                f"&order=utc_date.asc"
+                f"&limit=10000"
+            )
+            r = self.session.get(endpoint, headers=self.headers, timeout=10)
+            if r.status_code != 200:
+                return []
+            return [
+                {
+                    "utcDate":       row["utc_date"],
+                    "homeTeam_id":   row["home_team_id"],
+                    "homeTeam_name": row["home_team_name"],
+                    "awayTeam_id":   row["away_team_id"],
+                    "awayTeam_name": row["away_team_name"],
+                    "homeGoals":     row["home_goals"],
+                    "awayGoals":     row["away_goals"],
+                    "match_id":      row["match_id"],
+                    "season":        row["season"],
+                }
+                for row in r.json()
+            ]
+        except Exception as e:
+            logger.error(f"[Supabase] get_stored_historical_matches error: {e}")
+            return []
+
+    def store_historical_matches(self, league_code: str, matches: list) -> int:
+        """
+        ML-01: Bulk-upserts historical match records into Supabase.
+        Uses match_id as the unique key — safe to call multiple times (idempotent).
+        Batches in chunks of 500 to avoid Supabase payload limits.
+        Returns the number of records successfully stored.
+        """
+        if not self.enabled or not matches:
+            return 0
+        try:
+            rows = [
+                {
+                    "match_id":       m["match_id"],
+                    "league_code":    league_code,
+                    "season":         m.get("season"),
+                    "utc_date":       m["utcDate"],
+                    "home_team_id":   m["homeTeam_id"],
+                    "home_team_name": m["homeTeam_name"],
+                    "away_team_id":   m["awayTeam_id"],
+                    "away_team_name": m["awayTeam_name"],
+                    "home_goals":     m["homeGoals"],
+                    "away_goals":     m["awayGoals"],
+                }
+                for m in matches
+            ]
+            endpoint = f"{self.url}/rest/v1/historical_matches"
+            upsert_headers = {
+                **self.headers,
+                "Content-Type": "application/json",
+                "Prefer":       "resolution=merge-duplicates",
+            }
+            CHUNK = 500
+            stored = 0
+            for i in range(0, len(rows), CHUNK):
+                chunk = rows[i : i + CHUNK]
+                r = self.session.post(
+                    endpoint, headers=upsert_headers, json=chunk, timeout=30
+                )
+                if r.status_code in (200, 201, 204):
+                    stored += len(chunk)
+                else:
+                    logger.error(
+                        f"[Supabase] store_historical_matches batch {i//CHUNK} "
+                        f"failed: {r.status_code} {r.text[:200]}"
+                    )
+            return stored
+        except Exception as e:
+            logger.error(f"[Supabase] store_historical_matches error: {e}")
+            return 0
+
+    def has_stored_season(self, league_code: str, season: int) -> bool:
+        """
+        ML-01: Returns True if at least one match for this league+season is
+        already stored in Supabase.  Used by the bootstrap to skip re-fetching.
+        """
+        if not self.enabled:
+            return False
+        try:
+            endpoint = (
+                f"{self.url}/rest/v1/historical_matches"
+                f"?league_code=eq.{league_code}"
+                f"&season=eq.{season}"
+                f"&limit=1"
+                f"&select=match_id"
+            )
+            r = self.session.get(endpoint, headers=self.headers, timeout=5)
+            return r.status_code == 200 and len(r.json()) > 0
+        except Exception as e:
+            logger.error(f"[Supabase] has_stored_season error: {e}")
+            return False
+
     # ─── Storage: Model persistence ───────────────────────────────────────────
+
+
 
 
     def ensure_bucket_exists(self, bucket_name: str = MODELS_BUCKET) -> bool:
