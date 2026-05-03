@@ -32,6 +32,7 @@ class ModelService:
     def __init__(self):
         self._model_cache: dict = {}
         self._training_in_progress: dict = {}
+        self.MODEL_VERSION = "v2.2-XGB-Isotonic"
 
     # ── Path helpers ──────────────────────────────────────────────────────────
 
@@ -337,6 +338,20 @@ class ModelService:
 
             # BUG A FIX: Remove old model files (keep 2 as backup)
             self._cleanup_old_models(league_code, keep=2)
+
+            # ── Model Registry: record this training run ────────────────────
+            try:
+                from app.services.registry_service import registry_service
+                registry_service.register_model(
+                    league_code=league_code,
+                    version=self.MODEL_VERSION,
+                    mae_home=mae_h,
+                    mae_away=mae_a,
+                    n_training=len(df_train),
+                    path=os.path.basename(new_path),
+                )
+            except Exception as reg_err:
+                logger.warning(f"[{league_code}] Registry record failed (non-fatal): {reg_err}")
 
             return payload
 

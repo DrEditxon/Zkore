@@ -68,6 +68,13 @@
                 Value Bets
                 <span class="nav-badge">NEW</span>
             </a>
+            <a href="#" class="nav-item" data-view="toppicks" onclick="switchView('toppicks', this)">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>
+                </svg>
+                Top 10 Picks
+                <span class="nav-badge" style="background:var(--blue-dim);color:var(--blue)">PRO</span>
+            </a>
 
             <div class="nav-section-label">Análisis</div>
             <a href="#" class="nav-item" data-view="historial" onclick="switchView('historial', this)">
@@ -84,6 +91,13 @@
                     <line x1="6" y1="20" x2="6" y2="14" />
                 </svg>
                 Estadísticas
+            </a>
+            <a href="#" class="nav-item" data-view="performance" onclick="switchView('performance', this)">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
+                </svg>
+                Rendimiento
+                <span class="nav-badge" style="background:var(--blue-dim);color:var(--blue)">PRO</span>
             </a>
 
             <div class="nav-section-label">Configuración</div>
@@ -407,9 +421,23 @@
                 <div class="settings-row">
                     <div>
                         <div class="settings-label">Modelo IA</div>
-                        <div class="settings-sub">XGBoost Regressor + Distribución Poisson</div>
+                        <div class="settings-sub" id="settingsModelType">XGBoost Regressor + Distribución Poisson</div>
                     </div>
                     <span class="badge-active">Activo</span>
+                </div>
+                <div class="settings-row">
+                    <div>
+                        <div class="settings-label">Versión del Modelo</div>
+                        <div class="settings-sub" id="settingsModelVersion">Cargando...</div>
+                    </div>
+                    <span class="badge-active" style="background:var(--blue-dim);color:var(--blue)">v2.2</span>
+                </div>
+                <div class="settings-row">
+                    <div>
+                        <div class="settings-label">Estado de Entrenamiento</div>
+                        <div class="settings-sub" id="settingsModelAge">Días desde el último entreno: —</div>
+                    </div>
+                    <span id="settingsModelStatus" class="badge-active">—</span>
                 </div>
                 <div class="settings-row">
                     <div>
@@ -419,6 +447,33 @@
                     <span class="badge-active">Activo</span>
                 </div>
             </div>
+        </div>
+
+        <!-- ─── VIEW: TOP 10 PICKS ─── -->
+        <div class="view" id="view-toppicks">
+            <div class="page-header">
+                <div>
+                    <h1 class="page-title">Top 10 Picks <span class="nav-badge" style="font-size:0.7rem;padding:3px 8px;vertical-align:middle">PRO</span></h1>
+                    <p class="page-sub">Ranking diario automático · Score = Prob×0.5 + EV×0.3 + Confianza×0.2</p>
+                </div>
+            </div>
+            <div id="topPicksContent">
+                <div style="text-align:center;padding:60px 20px;color:var(--text-muted)">
+                    <div style="font-size:2rem;margin-bottom:12px">🏆</div>
+                    <p>Selecciona una liga o deja en blanco para ver picks de todas las ligas.</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- ─── VIEW: PERFORMANCE ─── -->
+        <div class="view" id="view-performance">
+            <div class="page-header">
+                <div>
+                    <h1 class="page-title">Rendimiento <span class="page-title-accent">📈</span></h1>
+                    <p class="page-sub">ROI real · Accuracy · Brier Score · Métricas por liga (últimos 30 días)</p>
+                </div>
+            </div>
+            <div id="performanceContent"></div>
         </div>
 
     </main>
@@ -434,7 +489,7 @@
     <!-- Toast -->
     <div id="toastContainer" class="toast-container"></div>
 
-    <script src="/static/app.js"></script>
+    <script src="/static/app.js?v=1.0.2"></script>
 </body>
 
 </html>

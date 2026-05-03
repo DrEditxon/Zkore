@@ -5,6 +5,9 @@ from app.services.data_service import data_service
 from app.services.model_service import model_service
 from app.services.poisson_service import poisson_service
 from app.services.history_service import history_service
+from app.services.picks_service import picks_service
+from app.services.registry_service import registry_service
+from app.services.performance_service import performance_service
 
 from app.core.pipeline import predict_match
 from app.core.limiter import limiter
@@ -224,3 +227,110 @@ def get_value_bets(league_code: str, background_tasks: BackgroundTasks, api_key:
             "min_edge":       f"{int(MIN_EV * 100)}%",
         },
     }
+
+
+# ── TOP 10 PICKS diarios ──────────────────────────────────────────────────────
+
+@router.get("/top-picks")
+@limiter.limit("20/minute")
+def get_top_picks(
+    request: Request,
+    league_code: str | None = None,
+    api_key: str = Depends(verify_api_key),
+):
+    """
+    TOP 10 PICKS del día — ranking automático por scoring compuesto.
+
+    score = (prob * 0.50) + (ev * 0.30) + (confidence * 0.20)
+
+    Filtros: prob >= 52%, EV >= 4%.
+    Opcional: ?league_code=PL para filtrar por liga.
+    """
+    try:
+        picks = picks_service.get_cached_picks(league_code)
+        return {
+            "date":       __import__('datetime').date.today().isoformat(),
+            "total":      len(picks),
+            "league_filter": league_code,
+            "picks":      picks,
+            "scoring_formula": {
+                "prob_weight":       0.50,
+                "ev_weight":         0.30,
+                "confidence_weight": 0.20,
+                "min_prob":          0.52,
+                "min_ev":            0.04,
+            },
+        }
+    except Exception as e:
+        logger.error(f"[/top-picks] Error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Error generando top picks")
+
+
+# ── MODEL REGISTRY ────────────────────────────────────────────────────────────
+
+@router.get("/models")
+def get_active_models(api_key: str = Depends(verify_api_key)):
+    """
+    Devuelve los modelos activos — versión, métricas y timestamp de entrenamiento.
+    Sirve tanto desde Supabase (registry) como desde caché local como fallback.
+    """
+    try:
+        models = registry_service.get_active_models(limit=30)
+
+        # Enrich with live cache status
+        live_status = {}
+        for lc, payload in model_service._model_cache.items():
+            live_status[lc] = {
+                "cached_in_memory": True,
+                "age_days":         payload.get("model_age_days"),
+                "is_stale":         payload.get("is_stale"),
+                "training_in_progress": model_service._training_in_progress.get(lc, False),
+            }
+
+        return {
+            "version":      model_service.MODEL_VERSION,
+            "registry":     models,
+            "live_status":  live_status,
+        }
+    except Exception as e:
+        logger.error(f"[/models] Error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Error obteniendo modelos")
+
+
+# ── PERFORMANCE METRICS ───────────────────────────────────────────────────────
+
+@router.get("/performance")
+def get_performance(
+    days: int = 30,
+    api_key: str = Depends(verify_api_key),
+):
+    """
+    Métricas globales de rendimiento: accuracy, ROI, Brier Score.
+    ?days=30 (default) para el período de análisis.
+    """
+    try:
+        result = performance_service.get_global_performance(days=days)
+        result["period_days"] = days
+        return result
+    except Exception as e:
+        logger.error(f"[/performance] Error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Error calculando métricas")
+
+
+@router.get("/performance/{league_code}")
+def get_league_performance(
+    league_code: str,
+    days: int = 30,
+    api_key: str = Depends(verify_api_key),
+):
+    """
+    Métricas de rendimiento por liga específica.
+    """
+    try:
+        result = performance_service.get_league_performance(league_code, days=days)
+        result["period_days"] = days
+        result["league_code"] = league_code
+        return result
+    except Exception as e:
+        logger.error(f"[/performance/{league_code}] Error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Error calculando métricas de liga")

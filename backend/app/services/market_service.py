@@ -20,6 +20,7 @@ LEAGUE_MAP = {
     "DED": "soccer_netherlands_eredivisie",
     "BSA": "soccer_brazil_campeonato",
     "ELC": "soccer_efl_championship",
+    "WC": "soccer_fifa_world_cup",
 }
 
 # Mapping to ESPN API league codes
@@ -34,6 +35,7 @@ ESPN_MAP = {
     "BSA": "bra.1",
     "ELC": "eng.2",
     "COL": "col.1",
+    "WC": "fifa.world",
 }
 
 

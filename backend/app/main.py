@@ -122,6 +122,7 @@ def health_check():
 
     return {
         "status": "ok",
+        "version": model_service.MODEL_VERSION,
         "models": model_files,
     }
 

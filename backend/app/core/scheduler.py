@@ -5,24 +5,32 @@ Without this, models only retrain when a user hits /upcoming.
 On Render Free Tier the service sleeps after inactivity — models
 can stay stale for weeks if no one visits.
 
-This scheduler runs once at startup and checks every 6 hours whether
-any league model is stale (> 7 days) or missing, and retrains it.
+Scheduler cycles:
+  - Every 6 hours  → check model staleness, retrain if needed + feedback loop
+  - Every 24 hours → generate TOP 10 daily picks for all leagues
+  - Every 7 days   → force full retrain for ALL leagues (ignores staleness check)
+
 Uses only stdlib threading — no extra dependencies (no APScheduler/Celery).
 """
 
 import threading
 import logging
 import time
-from datetime import datetime
+from datetime import datetime, date
 
 logger = logging.getLogger(__name__)
 
 # How often to check for stale models (seconds)
-SCHEDULE_INTERVAL_SECONDS = 6 * 3600  # 6 hours
+SCHEDULE_INTERVAL_SECONDS  = 6  * 3600   # 6 hours
+PICKS_INTERVAL_SECONDS     = 24 * 3600   # 24 hours
+FULL_RETRAIN_INTERVAL_DAYS = 7           # weekly forced full retrain
 
 # Leagues to keep warm proactively
 # Matches config.py LEAGUES_METADATA keys (minus CL/CLI which have no models)
-SCHEDULED_LEAGUES = ["PL", "PD", "BL1", "SA", "FL1", "PPL", "DED", "BSA", "ELC", "COL"]
+SCHEDULED_LEAGUES = ["PL", "PD", "BL1", "SA", "FL1", "PPL", "DED", "BSA", "ELC", "COL", "WC"]
+
+# Track last full-retrain date
+_last_full_retrain_date: date | None = None
 
 
 def _run_scheduled_retraining():
@@ -32,17 +40,29 @@ def _run_scheduled_retraining():
     Also refreshes the historical data cache (invalidate → re-fetch) before training
     so models always incorporate the latest finished matches.
     """
+    global _last_full_retrain_date
+
     # Wait 90 seconds at startup to let the server fully initialize
     time.sleep(90)
     logger.info("[Scheduler] Background retraining scheduler started.")
 
     while True:
-        logger.info(f"[Scheduler] Running scheduled model check at {datetime.now().isoformat()}")
+        now = datetime.now()
+        logger.info(f"[Scheduler] Running scheduled model check at {now.isoformat()}")
 
         try:
             # Import here to avoid circular imports at module load time
             from app.services.model_service import model_service
             from app.services.data_service import data_service
+
+            # ── Determine if this is a weekly full-retrain cycle ──────────────
+            today = date.today()
+            force_retrain = False
+            if (_last_full_retrain_date is None or
+                    (today - _last_full_retrain_date).days >= FULL_RETRAIN_INTERVAL_DAYS):
+                force_retrain = True
+                _last_full_retrain_date = today
+                logger.info("[Scheduler] Weekly full retrain cycle triggered.")
 
             for league_code in SCHEDULED_LEAGUES:
                 try:
@@ -50,6 +70,10 @@ def _run_scheduled_retraining():
 
                     if payload is None:
                         logger.info(f"[Scheduler] {league_code}: No model found — triggering training.")
+                        _retrain_league(league_code, data_service, model_service)
+
+                    elif force_retrain:
+                        logger.info(f"[Scheduler] {league_code}: Weekly forced retrain.")
                         _retrain_league(league_code, data_service, model_service)
 
                     elif payload.get("is_stale", False):
@@ -91,6 +115,28 @@ def _run_scheduled_retraining():
         time.sleep(SCHEDULE_INTERVAL_SECONDS)
 
 
+def _run_daily_picks():
+    """
+    Separate daemon thread that generates TOP 10 PICKS once per day.
+    Runs 2 minutes after startup, then every 24 hours.
+    Fire-and-forget: errors are logged, never propagated.
+    """
+    time.sleep(120)  # Give main scheduler time to check/train first
+    logger.info("[Picks Scheduler] Daily picks generator started.")
+
+    while True:
+        try:
+            logger.info("[Picks Scheduler] Generating TOP 10 daily picks...")
+            from app.services.picks_service import picks_service
+            picks = picks_service.generate_top_picks(save_to_db=True)
+            logger.info(f"[Picks Scheduler] Generated {len(picks)} picks.")
+        except Exception as e:
+            logger.error(f"[Picks Scheduler] Error generating picks: {e}")
+
+        logger.info(f"[Picks Scheduler] Next run in 24 hours.")
+        time.sleep(PICKS_INTERVAL_SECONDS)
+
+
 def _retrain_league(league_code: str, data_service, model_service):
     """Synchronously retrain a single league inside the scheduler thread."""
     # BUG-03 FIX: Use _is_training_locked() instead of the in-memory dict so
@@ -127,4 +173,8 @@ def start_scheduler():
     """
     t = threading.Thread(target=_run_scheduled_retraining, daemon=True, name="ZkoreScheduler")
     t.start()
-    logger.info("[Scheduler] Daemon thread launched.")
+    logger.info("[Scheduler] Retraining daemon thread launched.")
+
+    t2 = threading.Thread(target=_run_daily_picks, daemon=True, name="ZkoreDailyPicks")
+    t2.start()
+    logger.info("[Scheduler] Daily picks daemon thread launched.")

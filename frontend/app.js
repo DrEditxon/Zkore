@@ -47,6 +47,9 @@ function switchView(view, el) {
     if (view === "historial") renderHistorialView();
     if (view === "valuebets") renderValueBetsView();
     if (view === "estadisticas") renderEstadisticasView();
+    if (view === "ajustes") renderAjustesView();
+    if (view === "toppicks") renderTopPicksView();
+    if (view === "performance") renderPerformanceView();
     return false;
 }
 
@@ -801,6 +804,56 @@ async function renderValueBetsView() {
 }
 
 // ══════════════════════════════════════════════
+// AJUSTES VIEW
+// ══════════════════════════════════════════════
+async function renderAjustesView() {
+    const versionEl = document.getElementById("settingsModelVersion");
+    const ageEl     = document.getElementById("settingsModelAge");
+    const statusEl  = document.getElementById("settingsModelStatus");
+
+    try {
+        const r = await fetch("/health");
+        if (!r.ok) throw new Error(`${r.status}`);
+        const data = await r.json();
+
+        versionEl.textContent = data.version || "v2.2-XGB-Isotonic";
+
+        if (currentLeague && data.models && data.models[currentLeague]) {
+            const m = data.models[currentLeague];
+            const age = m.age_days !== null ? `${m.age_days} días` : "No entrenado";
+            ageEl.textContent = `Días desde el último entreno: ${age}`;
+            
+            if (m.training_in_progress) {
+                statusEl.textContent = "Entrenando...";
+                statusEl.className = "badge-active status-warning";
+                statusEl.style.background = "var(--warn-dim)";
+                statusEl.style.color = "var(--warn)";
+            } else if (m.is_stale) {
+                statusEl.textContent = "Obsoleto";
+                statusEl.className = "badge-active status-error";
+                statusEl.style.background = "var(--danger-dim)";
+                statusEl.style.color = "var(--danger)";
+            } else {
+                statusEl.textContent = "Actualizado";
+                statusEl.className = "badge-active status-ok";
+                statusEl.style.background = "var(--accent-dim)";
+                statusEl.style.color = "var(--accent)";
+            }
+        } else {
+            ageEl.textContent = "Selecciona una liga para ver detalles específicos.";
+            statusEl.textContent = "—";
+            statusEl.className = "badge-active";
+            statusEl.style.background = "var(--border)";
+            statusEl.style.color = "var(--text-muted)";
+        }
+
+    } catch (e) {
+        console.warn("Ajustes load error:", e);
+        if (versionEl) versionEl.textContent = "Error al cargar";
+    }
+}
+
+// ══════════════════════════════════════════════
 // ESTADÍSTICAS VIEW
 // ══════════════════════════════════════════════
 function renderEstadisticasView() {
@@ -1053,6 +1106,213 @@ function closeModal(e) {
 function closePredModal() {
     document.getElementById("predModal").style.display = "none";
     document.body.style.overflow = "auto";
+}
+
+// ══════════════════════════════════════════════
+// TOP PICKS VIEW
+// ══════════════════════════════════════════════
+async function renderTopPicksView() {
+    const el = document.getElementById("topPicksContent");
+    if (!el) return;
+
+    el.innerHTML = `<div style="text-align:center;padding:60px 20px;color:var(--text-muted)">
+        <div class="table-spinner" style="margin:0 auto 16px;width:32px;height:32px;border-width:3px"></div>
+        <p>Calculando mejores picks del día...</p>
+    </div>`;
+
+    try {
+        const params = currentLeague ? `?league_code=${currentLeague}` : "";
+        const r = await fetch(`/top-picks${params}`);
+        if (!r.ok) throw new Error(`Error ${r.status}`);
+        const data = await r.json();
+
+        if (!data.picks || !data.picks.length) {
+            el.innerHTML = `<div style="text-align:center;padding:60px 20px;color:var(--text-muted)">
+                <div style="font-size:2.5rem;margin-bottom:14px">🔍</div>
+                <p style="font-weight:600;color:var(--text-primary)">Sin picks disponibles hoy</p>
+                <p style="font-size:.85rem;margin-top:8px">El motor necesita partidos con EV ≥ 4% y probabilidad ≥ 52%.</p>
+            </div>`;
+            return;
+        }
+
+        const formulaHtml = `
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:16px 22px;margin-bottom:24px;display:flex;gap:24px;flex-wrap:wrap;align-items:center">
+            <div style="font-size:.75rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--text-muted)">
+                🧠 Scoring Formula
+            </div>
+            <div style="font-family:var(--mono);font-size:.8rem;color:var(--text-primary)">
+                score = <span style="color:var(--accent)">prob×0.50</span> + <span style="color:var(--blue)">EV×0.30</span> + <span style="color:var(--warn)">conf×0.20</span>
+            </div>
+            <div style="font-size:.75rem;color:var(--text-muted)">${data.date} · ${data.total} picks · Filtros: prob≥52%, EV≥4%</div>
+        </div>`;
+
+        const verdictLabels = { L: "Local", E: "Empate", V: "Visitante" };
+        const verdictColors = { L: "var(--accent)", E: "#64748b", V: "var(--blue)" };
+        const confColors = { Alta: "var(--accent)", Media: "var(--warn)", Baja: "var(--danger)" };
+
+        const cardsHtml = data.picks.map(p => {
+            const date = new Date(p.utc_date).toLocaleString("es-ES", { weekday:"short", day:"numeric", month:"short", hour:"2-digit", minute:"2-digit" });
+            const hCrest = p.home_crest ? `<img src="${p.home_crest}" style="width:26px;height:26px;object-fit:contain" onerror="this.style.display='none'" alt="">` : "⚽";
+            const aCrest = p.away_crest ? `<img src="${p.away_crest}" style="width:26px;height:26px;object-fit:contain" onerror="this.style.display='none'" alt="">` : "⚽";
+            const vColor = verdictColors[p.verdict] || "var(--accent)";
+            const vLabel = p.outcome_label || verdictLabels[p.verdict] || p.verdict;
+            const scoreVal = p.score_final || p.score || 0;
+            const scoreBar = Math.min(scoreVal * 100, 100).toFixed(0);
+            const probVal = p.model_prob || p.prob || p.prob_home || 0; // fallback robusto
+            const evVal = p.expected_value || 0;
+            const evColor = evVal >= 15 ? "var(--success,#22c55e)" : evVal >= 8 ? "var(--warn,#f59e0b)" : "var(--blue)";
+            const kellyVal = p.kelly_stake || p.kelly || 0;
+            const oddsVal = p.market_odds || p.odds || "—";
+
+            return `
+            <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:18px 22px;margin-bottom:14px">
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+                    <div style="display:flex;align-items:center;gap:10px">
+                        <span style="font-family:var(--mono);font-size:.82rem;font-weight:700;color:var(--accent);background:var(--accent-dim);border-radius:99px;padding:3px 10px">#${p.rank}</span>
+                        <div style="display:flex;align-items:center;gap:8px">
+                            ${hCrest}
+                            <span style="font-weight:600">${p.home_team}</span>
+                            <span style="color:var(--text-muted);font-size:.8rem">vs</span>
+                            <span style="font-weight:600">${p.away_team}</span>
+                            ${aCrest}
+                        </div>
+                        <span style="font-size:.72rem;color:var(--text-muted);margin-left:4px">[${p.league_code}]</span>
+                    </div>
+                    <span style="font-size:.75rem;color:var(--text-muted)">${date}</span>
+                </div>
+                <div style="display:grid;grid-template-columns:2fr 1fr 1fr 1fr 1fr;gap:12px;align-items:center">
+                    <div>
+                        <div style="font-size:.72rem;color:var(--text-muted);margin-bottom:4px">PICK</div>
+                        <div style="font-weight:700;font-size:1rem;color:${vColor}">${vLabel}</div>
+                        <div style="font-size:.72rem;color:var(--text-muted);margin-top:2px">cuota ${oddsVal}</div>
+                    </div>
+                    <div style="text-align:center">
+                        <div style="font-size:.72rem;color:var(--text-muted);margin-bottom:4px">PROB</div>
+                        <div style="font-size:1.1rem;font-weight:700;color:var(--accent)">${probVal}%</div>
+                    </div>
+                    <div style="text-align:center">
+                        <div style="font-size:.72rem;color:var(--text-muted);margin-bottom:4px">EV</div>
+                        <div style="font-size:1.1rem;font-weight:700;color:${evColor}">+${evVal}%</div>
+                    </div>
+                    <div style="text-align:center">
+                        <div style="font-size:.72rem;color:var(--text-muted);margin-bottom:4px">KELLY</div>
+                        <div style="font-size:1.1rem;font-weight:700;color:var(--text-primary)">${kellyVal}%</div>
+                    </div>
+                    <div style="text-align:center">
+                        <div style="font-size:.72rem;color:var(--text-muted);margin-bottom:4px">CONF</div>
+                        <div style="font-weight:700;color:${confColors[p.confidence] || 'var(--text-muted)'}">${p.confidence}</div>
+                    </div>
+                </div>
+                <div style="margin-top:14px">
+                    <div style="display:flex;justify-content:space-between;font-size:.7rem;color:var(--text-muted);margin-bottom:4px">
+                        <span>Score final</span><span>${(scoreVal * 100).toFixed(1)}</span>
+                    </div>
+                    <div style="height:4px;border-radius:99px;background:var(--border);overflow:hidden">
+                        <div style="height:100%;width:${scoreBar}%;background:linear-gradient(90deg,var(--accent),var(--blue));border-radius:99px;transition:width .6s ease"></div>
+                    </div>
+                </div>
+            </div>`;
+        }).join("");
+
+        el.innerHTML = formulaHtml + cardsHtml;
+
+        // Animate score bars
+        setTimeout(() => {
+            el.querySelectorAll("div[style*='transition:width']").forEach(bar => {
+                const w = bar.style.width; bar.style.width = "0";
+                requestAnimationFrame(() => { bar.style.width = w; });
+            });
+        }, 80);
+
+    } catch(e) {
+        el.innerHTML = `<div style="text-align:center;padding:60px 20px;color:var(--danger)">⚠️ ${e.message}</div>`;
+    }
+}
+
+// ══════════════════════════════════════════════
+// PERFORMANCE VIEW
+// ══════════════════════════════════════════════
+async function renderPerformanceView() {
+    const el = document.getElementById("performanceContent");
+    if (!el) return;
+
+    el.innerHTML = `<div style="text-align:center;padding:60px 20px;color:var(--text-muted)">
+        <div class="table-spinner" style="margin:0 auto 16px;width:32px;height:32px;border-width:3px"></div>
+        <p>Calculando métricas de rendimiento...</p>
+    </div>`;
+
+    try {
+        const r = await fetch("/performance?days=30");
+        if (!r.ok) throw new Error(`Error ${r.status}`);
+        const d = await r.json();
+
+        const roiColor = d.roi >= 0 ? "var(--accent)" : "var(--danger)";
+        const roiSign  = d.roi >= 0 ? "+" : "";
+        const brier    = d.avg_brier !== null ? d.avg_brier.toFixed(4) : "—";
+        const brierColor = d.avg_brier !== null ? (d.avg_brier < 0.22 ? "var(--accent)" : d.avg_brier < 0.28 ? "var(--warn)" : "var(--danger)") : "var(--text-muted)";
+
+        const byLeagueHtml = (d.by_league || []).map(l => `
+            <tr>
+                <td style="font-weight:600">${l.league_code}</td>
+                <td style="font-family:var(--mono)">${l.n}</td>
+                <td style="font-family:var(--mono);color:${l.accuracy>=60?'var(--accent)':'var(--text-primary)'}">${l.accuracy}%</td>
+                <td style="font-family:var(--mono);color:${l.roi>=0?'var(--accent)':'var(--danger)'}">${l.roi>=0?'+':''}${l.roi}%</td>
+            </tr>`).join("");
+
+        el.innerHTML = `
+        <div class="stat-cards" style="max-width:900px;margin-bottom:24px">
+            <div class="stat-card accent-green">
+                <div class="sc-icon green">🎯</div>
+                <div class="sc-value">${d.accuracy}%</div>
+                <div class="sc-label">Accuracy Global</div>
+                <div class="sc-delta ${d.accuracy>=60?'up':'neutral'}">${d.hits} aciertos / ${d.n_resolved} totales</div>
+            </div>
+            <div class="stat-card accent-blue">
+                <div class="sc-icon blue">💰</div>
+                <div class="sc-value" style="color:${roiColor}">${roiSign}${d.roi}%</div>
+                <div class="sc-label">ROI Simulado</div>
+                <div class="sc-delta ${d.roi>=0?'up':'down'}">Profit: ${roiSign}${d.profit} u</div>
+            </div>
+            <div class="stat-card accent-warn">
+                <div class="sc-icon warn">📐</div>
+                <div class="sc-value" style="color:${brierColor}">${brier}</div>
+                <div class="sc-label">Brier Score</div>
+                <div class="sc-delta neutral">&lt;0.22 excelente · &lt;0.28 bueno</div>
+            </div>
+            <div class="stat-card accent-red">
+                <div class="sc-icon red">📅</div>
+                <div class="sc-value">${d.period_days}d</div>
+                <div class="sc-label">Período analizado</div>
+                <div class="sc-delta neutral">${d.n_resolved} predicciones resueltas</div>
+            </div>
+        </div>
+
+        ${d.n_resolved === 0 ? `<div style="text-align:center;padding:40px;color:var(--text-muted)"><p>Sin predicciones resueltas aún. Las métricas se actualizan automáticamente a medida que los partidos finalizan.</p></div>` : ""}
+
+        ${(d.by_league||[]).length ? `
+        <div class="panel" style="max-width:900px">
+            <div class="panel-header"><div class="panel-title"><span class="panel-icon">📊</span>Rendimiento por Liga</div></div>
+            <div class="predictions-table-wrap">
+                <table class="predictions-table">
+                    <thead><tr><th>Liga</th><th>Partidos</th><th>Accuracy</th><th>ROI</th></tr></thead>
+                    <tbody>${byLeagueHtml}</tbody>
+                </table>
+            </div>
+        </div>` : ""}
+
+        <div style="margin-top:16px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:18px 22px;max-width:900px">
+            <p class="modal-section-title" style="margin-bottom:10px">Metodología</p>
+            <div style="font-size:.82rem;color:var(--text-secondary);line-height:1.6">
+                <strong style="color:var(--text-primary)">ROI</strong>: Calculado simulando apuestas con cuotas promedio por tipo de resultado
+                (Local: ${(d.simulated_odds||{}).L||2.10}, Empate: ${(d.simulated_odds||{}).E||3.40}, Visitante: ${(d.simulated_odds||{}).V||2.60}).
+                1 unidad de stake por predicción. Fracción Kelly 25%.<br>
+                <strong style="color:var(--text-primary)">Brier Score</strong>: Métrica estándar de calibración probabilística. Rango [0, 2]. &lt;0.22 = excelente, &gt;0.28 = posible drift.
+            </div>
+        </div>`;
+
+    } catch(e) {
+        el.innerHTML = `<div style="text-align:center;padding:60px 20px;color:var(--danger)">⚠️ ${e.message}</div>`;
+    }
 }
 
 // ── Utils ─────────────────────────────────────
